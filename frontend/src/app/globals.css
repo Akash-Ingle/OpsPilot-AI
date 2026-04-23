@@ -1,0 +1,65 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* --------------------------------------------------------------------------
+ * Base tokens: dark-first, editor-style dashboard aesthetic.
+ * ------------------------------------------------------------------------ */
+
+:root {
+  --bg-base: #0b0c0f;
+  --bg-elevated: #12141a;
+  --bg-subtle: #171a22;
+  --border-base: rgba(255, 255, 255, 0.08);
+  --border-strong: rgba(255, 255, 255, 0.14);
+  --text-primary: #e5e7eb;
+  --text-secondary: #9ca3af;
+  --text-muted: #6b7280;
+}
+
+html,
+body {
+  background: var(--bg-base);
+  color: var(--text-primary);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+body {
+  font-feature-settings: "cv11", "ss01";
+}
+
+/* Slim scrollbar to match dark aesthetic without going fully custom. */
+*::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+*::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.08);
+  border-radius: 999px;
+}
+*::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.14);
+}
+
+/* --------------------------------------------------------------------------
+ * Component utility classes. Keep these small; prefer inline Tailwind.
+ * ------------------------------------------------------------------------ */
+
+@layer components {
+  .card {
+    @apply rounded-xl border border-white/[0.06] bg-[var(--bg-elevated)];
+  }
+  .card-hover {
+    @apply transition-colors hover:border-white/[0.12] hover:bg-[var(--bg-subtle)];
+  }
+  .kbd {
+    @apply inline-flex items-center rounded border border-white/10 bg-white/5 px-1.5 py-0.5 font-mono text-[11px] text-neutral-300;
+  }
+  .divider {
+    @apply border-white/[0.06];
+  }
+}

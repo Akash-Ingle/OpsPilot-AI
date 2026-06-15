@@ -149,6 +149,86 @@ class OpenAIProvider(LLMProvider):
         return response.choices[0].message.content or ""
 
 
+class GeminiProvider(LLMProvider):
+    """Google Gemini provider — supports the free tier (e.g. gemini-2.0-flash).
+
+    Uses the unified `google-genai` SDK and the model's native JSON mode
+    (`response_mime_type="application/json"`).
+    """
+
+    name = "gemini"
+
+    def __init__(self) -> None:
+        if not settings.gemini_api_key:
+            raise LLMError("GEMINI_API_KEY is not set")
+        try:
+            from google import genai  # type: ignore
+            from google.genai import errors as genai_errors  # type: ignore
+            from google.genai import types as genai_types  # type: ignore
+        except ImportError as exc:  # pragma: no cover
+            raise LLMError(
+                "google-genai package is not installed. "
+                "Add `google-genai` to requirements.txt."
+            ) from exc
+
+        self._genai = genai
+        self._genai_errors = genai_errors
+        self._genai_types = genai_types
+        self._client = genai.Client(api_key=settings.gemini_api_key)
+
+    def complete(self, system_prompt: str, user_prompt: str) -> str:
+        # Gemini's JSON mode is strong but, like OpenAI's, benefits from the
+        # word "json" appearing in the prompt so the model anchors its format.
+        user = user_prompt
+        if "json" not in (system_prompt + user).lower():
+            user += "\n\n(Respond in JSON.)"
+
+        config_kwargs: Dict[str, Any] = {
+            "system_instruction": system_prompt,
+            "temperature": settings.llm_temperature,
+            "max_output_tokens": settings.llm_max_tokens,
+            "response_mime_type": "application/json",
+        }
+
+        # Gemini 2.5 models have an internal "thinking" phase enabled by
+        # default, and those tokens count against `max_output_tokens` — which
+        # frequently truncates structured-JSON responses mid-string. We don't
+        # need extra reasoning here (the agent loop handles iteration), so
+        # disable thinking when the SDK supports it.
+        if "2.5" in (settings.llm_model or "") and hasattr(
+            self._genai_types, "ThinkingConfig"
+        ):
+            try:
+                config_kwargs["thinking_config"] = self._genai_types.ThinkingConfig(
+                    thinking_budget=0,
+                )
+            except Exception:  # pragma: no cover - SDK shape varies by version
+                pass
+
+        config = self._genai_types.GenerateContentConfig(**config_kwargs)
+
+        try:
+            response = self._client.models.generate_content(
+                model=settings.llm_model,
+                contents=user,
+                config=config,
+            )
+        except self._genai_errors.APIError as exc:
+            # The SDK raises APIError for non-2xx responses; surface a useful
+            # message and let the orchestrator decide retry semantics.
+            msg = str(exc).lower()
+            if "deadline" in msg or "timeout" in msg:
+                raise LLMTimeoutError(f"Gemini request timed out: {exc}") from exc
+            raise LLMError(f"Gemini API error: {exc}") from exc
+        except Exception as exc:  # noqa: BLE001 - SDK can surface various errors
+            msg = str(exc).lower()
+            if "deadline" in msg or "timeout" in msg:
+                raise LLMTimeoutError(f"Gemini request timed out: {exc}") from exc
+            raise LLMError(f"Gemini call failed: {exc}") from exc
+
+        return response.text or ""
+
+
 @lru_cache(maxsize=1)
 def _get_provider() -> LLMProvider:
     """Return a cached provider instance selected by configuration."""
@@ -157,8 +237,11 @@ def _get_provider() -> LLMProvider:
         return AnthropicProvider()
     if provider_name == "openai":
         return OpenAIProvider()
+    if provider_name in {"gemini", "google"}:
+        return GeminiProvider()
     raise LLMError(
-        f"Unsupported LLM provider: {settings.llm_provider!r}. Use 'anthropic' or 'openai'."
+        f"Unsupported LLM provider: {settings.llm_provider!r}. "
+        "Use 'anthropic', 'openai', or 'gemini'."
     )
 
 
@@ -401,5 +484,6 @@ __all__ = [
     "LLMProvider",
     "AnthropicProvider",
     "OpenAIProvider",
+    "GeminiProvider",
     "call_llm",
 ]

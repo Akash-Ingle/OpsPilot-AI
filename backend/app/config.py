@@ -3,7 +3,7 @@
 from functools import lru_cache
 from typing import List
 
-from pydantic import Field, field_validator
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -28,7 +28,8 @@ class Settings(BaseSettings):
 
     anthropic_api_key: str = ""
     openai_api_key: str = ""
-    llm_provider: str = "anthropic"  # "anthropic" | "openai"
+    gemini_api_key: str = ""
+    llm_provider: str = "anthropic"  # "anthropic" | "openai" | "gemini"
     llm_model: str = "claude-3-5-sonnet-latest"
     llm_temperature: float = 0.1
     llm_max_tokens: int = 1024
@@ -38,14 +39,22 @@ class Settings(BaseSettings):
 
     vector_db_path: str = "./.chroma"
 
-    cors_origins: List[str] = Field(default_factory=lambda: ["http://localhost:3000"])
+    # Stored as a raw string in the env so pydantic-settings doesn't try to
+    # JSON-decode it. Consumers should read `settings.cors_origins` (the
+    # property below) to get the parsed list. Reads the `CORS_ORIGINS` env var.
+    cors_origins_raw: str = Field(
+        default="http://localhost:3000",
+        validation_alias="CORS_ORIGINS",
+    )
 
-    @field_validator("cors_origins", mode="before")
-    @classmethod
-    def _split_cors_origins(cls, value):
-        if isinstance(value, str):
-            return [origin.strip() for origin in value.split(",") if origin.strip()]
-        return value
+    @property
+    def cors_origins(self) -> List[str]:
+        """Comma-separated origins, parsed into a list at access time."""
+        return [
+            origin.strip()
+            for origin in (self.cors_origins_raw or "").split(",")
+            if origin.strip()
+        ]
 
 
 @lru_cache

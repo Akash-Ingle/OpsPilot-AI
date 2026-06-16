@@ -54,15 +54,20 @@ class ScriptedProvider(LLMProvider):
 @pytest.fixture
 def patch_provider(monkeypatch):
     """Install a scripted provider and clear the factory cache."""
+    # Capture the real (lru_cached) factory up front. During the test
+    # `_get_provider` is monkeypatched to a plain lambda, and this fixture's
+    # teardown runs BEFORE monkeypatch restores the original - so we must clear
+    # the cache on the captured reference, not on whatever is patched in now.
+    real_get_provider = llm_client._get_provider
 
     def _install(responses):
         provider = ScriptedProvider(responses)
-        llm_client._get_provider.cache_clear()
+        real_get_provider.cache_clear()
         monkeypatch.setattr(llm_client, "_get_provider", lambda: provider)
         return provider
 
     yield _install
-    llm_client._get_provider.cache_clear()
+    real_get_provider.cache_clear()
 
 
 def test_parse_and_validate_accepts_valid_json():

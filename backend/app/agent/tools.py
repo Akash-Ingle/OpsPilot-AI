@@ -20,6 +20,7 @@ from __future__ import annotations
 import inspect
 import json
 import random
+import re
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Dict, List, Optional
@@ -79,14 +80,104 @@ class ToolExecution:
 # ---------------------------------------------------------------------------
 
 
+_REL_WINDOW_RE = re.compile(r"(\d+)\s*([smhd])", re.IGNORECASE)
+_FETCH_LOGS_LIMIT = 50
+
+
+def _parse_iso(value: Any) -> Optional[datetime]:
+    """Best-effort parse of an ISO-8601 string into a tz-aware datetime."""
+    if not isinstance(value, str) or not value.strip():
+        return None
+    text = value.strip().replace("Z", "+00:00")
+    try:
+        dt = datetime.fromisoformat(text)
+    except ValueError:
+        return None
+    return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
+
+
+def _parse_time_window(time_range: Any) -> tuple[datetime, datetime]:
+    """Resolve a flexible `time_range` into a concrete (start, end) UTC window.
+
+    Accepts:
+      - dict: {"start": <ISO>, "end": <ISO>} (either bound optional)
+      - relative string: "30m", "1h", "24h", "7d" (optionally prefixed, e.g.
+        "last_1h")
+      - anything else / unparseable: defaults to the last 24 hours.
+    """
+    now = datetime.now(timezone.utc)
+
+    if isinstance(time_range, dict):
+        end = _parse_iso(time_range.get("end")) or now
+        start = _parse_iso(time_range.get("start")) or (end - timedelta(hours=24))
+        return start, end
+
+    if isinstance(time_range, str):
+        match = _REL_WINDOW_RE.search(time_range)
+        if match:
+            qty = int(match.group(1))
+            unit = match.group(2).lower()
+            seconds = qty * {"s": 1, "m": 60, "h": 3600, "d": 86400}[unit]
+            return now - timedelta(seconds=seconds), now
+
+    return now - timedelta(hours=24), now
+
+
 def fetch_logs(
     time_range: str | Dict[str, str],
     service: str | None = None,
+    limit: int = _FETCH_LOGS_LIMIT,
 ) -> ToolResult:
-    """Return additional logs. TODO: query app.models.log.Log by service/time."""
+    """Query persisted logs for a service over a time window.
+
+    Reads from the `logs` table via a short-lived session so the agent can pull
+    additional context mid-analysis. Returns the most recent matching lines
+    (capped at `limit`) in chronological order, newest first.
+    """
+    # Imported lazily to avoid coupling the tool registry to the DB layer at
+    # module import time (keeps tool unit tests lightweight).
+    from app.database import SessionLocal
+    from app.models.log import Log
+
+    try:
+        cap = max(1, min(int(limit), 200))
+    except (TypeError, ValueError):
+        cap = _FETCH_LOGS_LIMIT
+
+    start, end = _parse_time_window(time_range)
+
+    session = SessionLocal()
+    try:
+        query = session.query(Log).filter(
+            Log.timestamp >= start, Log.timestamp <= end
+        )
+        if service:
+            query = query.filter(Log.service_name == service)
+        rows = query.order_by(Log.timestamp.desc()).limit(cap).all()
+    except Exception as exc:  # pragma: no cover - defensive
+        logger.exception("fetch_logs: query failed")
+        return ToolResult(ok=False, error=f"log query failed: {exc}")
+    finally:
+        session.close()
+
+    entries = [
+        {
+            "id": r.id,
+            "timestamp": r.timestamp.isoformat() if r.timestamp else None,
+            "service": r.service_name,
+            "severity": r.severity,
+            "message": r.message,
+        }
+        for r in rows
+    ]
     return ToolResult(
         ok=True,
-        data={"note": "stub", "time_range": time_range, "service": service},
+        data={
+            "window": {"start": start.isoformat(), "end": end.isoformat()},
+            "service": service,
+            "count": len(entries),
+            "logs": entries,
+        },
     )
 
 

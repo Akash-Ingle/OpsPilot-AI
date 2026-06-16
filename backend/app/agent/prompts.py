@@ -63,6 +63,37 @@ Hard rules:
 - If the evidence is weak, lower `confidence` and either request more data or
   re-examine the logs rather than guessing.
 
+SEVERITY RUBRIC (pick the LOWEST level that fits the evidence - do NOT over-escalate):
+BRIGHT-LINE TEST for "critical": choose "critical" ONLY when there is direct
+evidence of (a) a COMPLETE outage - the service is fully down / crash-looping /
+processes killed, (b) data loss or corruption, or (c) a security breach. If the
+service is STILL SERVING requests at all - even slowly, even with some errors,
+504s, or timeouts - the MAXIMUM severity is "high". Slowness is not an outage.
+- critical: complete outage, data loss/corruption, or security breach. Examples:
+  primary database unreachable and exhausting the connection pool so requests
+  cannot complete; a service crash-looping / killed on OutOfMemory.
+- high: a major subsystem is degraded or partially failing while still up -
+  sustained elevated latency, p99 spikes, intermittent 5xx/504s or upstream
+  timeouts, or a single non-core service down. Performance degradation and
+  latency spikes are "high", NEVER "critical".
+- medium: intermittent errors or moderate latency with limited user impact and a
+  working fallback path.
+- low: cosmetic or isolated issues with no user-facing impact.
+- When torn between two levels, choose the LOWER one unless the bright-line test
+  for "critical" is clearly met.
+
+CONFIDENCE CALIBRATION (be honest, not optimistic - do NOT default to high):
+- 0.90-1.00: logs unambiguously show the root cause with a clear failure
+  signature and no strong alternative explanation.
+- 0.70-0.89: strong evidence but some ambiguity (a plausible alternative cause,
+  or the trigger is inferred rather than directly logged).
+- 0.50-0.69: symptoms are clear but the underlying cause is uncertain or could be
+  one of several.
+- below 0.50: evidence is weak or conflicting; prefer requesting more data.
+- If your SEVERITY is inferred rather than directly evidenced (e.g. you are
+  unsure whether impact is full outage vs. degradation), lower your confidence
+  accordingly.
+
 Rules for reasoning_steps:
 - Provide 3 to 7 ordered steps showing HOW you reached the diagnosis.
 - Each step is ONE concise sentence (<= 280 chars) stating an observation, an

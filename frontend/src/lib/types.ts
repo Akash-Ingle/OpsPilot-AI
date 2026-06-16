@@ -115,3 +115,28 @@ export interface IncidentOut {
 export interface IncidentDetail extends IncidentOut {
   analyses: AnalysisOut[];
 }
+
+// --- Simulation / analysis triggers ----------------------------------------
+
+export interface ScenarioInfo {
+  name: string;
+  description: string;
+  default_duration_min: number;
+  default_service: string;
+}
+
+export interface SimulateResult {
+  scenario: string;
+  persisted: boolean;
+  count: number;
+}
+
+export interface AnalyzeResult {
+  incident_id: number;
+  analysis_id: number;
+  steps_run: number;
+  logs_analyzed: number;
+  anomalies_detected: number;
+  final: LLMStructuredOutput;
+  observability: AgentObservability;
+}

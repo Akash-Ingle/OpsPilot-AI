@@ -2,6 +2,7 @@ import { EmptyState } from "@/components/EmptyState";
 import { FilterBar } from "@/components/FilterBar";
 import { IncidentListItem } from "@/components/IncidentListItem";
 import { PageHeader } from "@/components/PageHeader";
+import { SimulateButton } from "@/components/SimulateButton";
 import { StatTile } from "@/components/StatTile";
 import { ApiError, listIncidents } from "@/lib/api";
 import { severityRank } from "@/lib/format";
@@ -63,6 +64,7 @@ export default async function DashboardPage({
         eyebrow="Dashboard"
         title="Incidents"
         description="AI-analyzed incidents detected from your service logs. Click any incident to inspect the agent's reasoning, tool usage, and cited evidence."
+        actions={<SimulateButton />}
       />
 
       <div className="mb-6 grid grid-cols-2 gap-3 sm:grid-cols-5">
@@ -87,7 +89,7 @@ export default async function DashboardPage({
           description={
             status || severity
               ? "Try clearing filters or choosing a different severity."
-              : "Run POST /simulate and POST /analyze on the backend to generate your first analyzed incident."
+              : "Click “Simulate incident” above to generate realistic logs and watch the AI agent diagnose your first incident."
           }
         />
       ) : (

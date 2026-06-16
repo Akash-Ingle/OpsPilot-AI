@@ -1,5 +1,6 @@
 """Tests for build_analysis_prompt."""
 
+import re
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any, List
@@ -230,7 +231,12 @@ def test_excerpts_are_tagged_with_log_ids_for_citation():
 
 
 def test_excerpts_without_ids_have_no_tag():
-    """Logs without integer ids should not produce a bogus [log_id=] tag."""
+    """Logs without integer ids should not produce a bogus numeric [log_id=N] tag.
+
+    The static guidance line ("Each line is tagged with [log_id=N] ...") uses the
+    literal placeholder `N`, which is fine; what must NOT appear is a concrete
+    numeric tag like `[log_id=0]` for a log that has no id.
+    """
     raw_logs = [
         {
             "timestamp": BASE_TS,
@@ -240,7 +246,7 @@ def test_excerpts_without_ids_have_no_tag():
         }
     ]
     prompt = build_analysis_prompt(raw_logs, [])
-    assert "[log_id=" not in prompt
+    assert not re.search(r"\[log_id=\d+\]", prompt)
     assert "something failed" in prompt
 
 

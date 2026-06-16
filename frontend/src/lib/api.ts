@@ -7,16 +7,31 @@
  */
 
 import type {
+  AnalyzeResult,
   IncidentDetail,
   IncidentOut,
   IncidentStatus,
   LogOut,
+  ScenarioInfo,
   Severity,
+  SimulateResult,
 } from "./types";
 
-const API_URL =
+// Base URL used by the browser (inlined into the client bundle at build time).
+const PUBLIC_API_URL =
   process.env.NEXT_PUBLIC_API_URL?.replace(/\/$/, "") ||
   "http://localhost:8000/api/v1";
+
+// In containerized setups the Next server and the browser reach the backend at
+// different hostnames (e.g. `http://backend:8000` inside the Docker network vs.
+// `http://localhost:8000` from the user's browser). When `INTERNAL_API_URL` is
+// set, server-side requests use it; the browser always uses the public URL.
+const INTERNAL_API_URL = process.env.INTERNAL_API_URL?.replace(/\/$/, "");
+
+const API_URL =
+  typeof window === "undefined" && INTERNAL_API_URL
+    ? INTERNAL_API_URL
+    : PUBLIC_API_URL;
 
 export class ApiError extends Error {
   readonly status: number;
@@ -111,6 +126,45 @@ export function listLogs(params: ListLogsParams = {}): Promise<LogOut[]> {
   qs.set("limit", String(params.limit ?? 100));
   qs.set("offset", String(params.offset ?? 0));
   return request<LogOut[]>(`/logs?${qs.toString()}`);
+}
+
+// ---------------------------------------------------------------------------
+// Simulation + analysis (write actions, used by the in-browser demo flow)
+// ---------------------------------------------------------------------------
+
+export function listScenarios(): Promise<ScenarioInfo[]> {
+  return request<ScenarioInfo[]>(`/simulate/scenarios`);
+}
+
+export interface SimulateParams {
+  scenario: string;
+  seed?: number;
+  service?: string;
+  duration_minutes?: number;
+}
+
+export function simulateScenario(
+  params: SimulateParams,
+): Promise<SimulateResult> {
+  return request<SimulateResult>(`/simulate`, {
+    method: "POST",
+    body: JSON.stringify(params),
+  });
+}
+
+export interface AnalyzeParams {
+  service_name?: string;
+  limit?: number;
+  max_steps?: number;
+}
+
+export function triggerAnalysis(
+  params: AnalyzeParams = {},
+): Promise<AnalyzeResult> {
+  return request<AnalyzeResult>(`/analyze`, {
+    method: "POST",
+    body: JSON.stringify(params),
+  });
 }
 
 export { API_URL };

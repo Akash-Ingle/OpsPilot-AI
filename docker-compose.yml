@@ -1,0 +1,41 @@
+# OpsPilot-AI — full stack in one command:  docker compose up --build
+#
+# Requires backend/.env to exist (copy from backend/.env.example) with at least
+# one LLM API key set and a valid LLM_MODEL. The database/vector store live in a
+# named volume; the LLM key is injected at runtime via env_file (never baked).
+
+services:
+  backend:
+    build: ./backend
+    env_file: ./backend/.env
+    environment:
+      # Container-appropriate overrides (persist data under the mounted volume).
+      DATABASE_URL: sqlite:////data/opspilot.db
+      VECTOR_DB_PATH: /data/.chroma
+      # The browser hits the Dockerized frontend at localhost:3100 -> allow it.
+      CORS_ORIGINS: http://localhost:3100
+    ports:
+      - "8000:8000"
+    volumes:
+      - opspilot-data:/data
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        # Browser-facing API URL (inlined into the client bundle at build time).
+        NEXT_PUBLIC_API_URL: http://localhost:8000/api/v1
+    environment:
+      # Server-side (in-container) requests reach the backend by service name.
+      INTERNAL_API_URL: http://backend:8000/api/v1
+      NEXT_PUBLIC_API_URL: http://localhost:8000/api/v1
+    ports:
+      # Host 3100 -> container 3000 (keeps host :3000 free for other projects).
+      - "3100:3000"
+    depends_on:
+      - backend
+    restart: unless-stopped
+
+volumes:
+  opspilot-data:

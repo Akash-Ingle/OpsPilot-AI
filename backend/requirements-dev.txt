@@ -1,0 +1,5 @@
+# Development / CI dependencies. Installs the full runtime stack plus the test
+# tooling used by the CI pipeline (pytest is already pinned in requirements.txt;
+# pytest-cov adds coverage reporting for the regression gate).
+-r requirements.txt
+pytest-cov==5.0.0

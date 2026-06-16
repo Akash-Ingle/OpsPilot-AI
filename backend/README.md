@@ -67,8 +67,28 @@ Base prefix: `/api/v1`
 ## Test
 
 ```bash
+# unit + integration tests (no API key needed; the LLM is mocked)
 pytest -q
+
+# with coverage (as CI runs it)
+pytest --cov=app --cov-report=term-missing
 ```
+
+## Evaluate the agent
+
+`scripts/run_eval.py` runs the multi-step agent against each seeded failure
+scenario, scores it against ground truth, and prints accuracy + confidence
+calibration. It calls a real LLM, so it needs a provider key in `.env`.
+
+```bash
+# from backend/, with an API key configured in .env
+python scripts/run_eval.py                        # all scenarios, seeds 1,2,3
+python scripts/run_eval.py --seeds 1 --threshold 0.7
+python scripts/run_eval.py --json-out eval-report.json
+```
+
+Exit code is non-zero when overall accuracy falls below `--threshold`, so the
+same script doubles as the regression signal used in CI.
 
 ## Roadmap
 

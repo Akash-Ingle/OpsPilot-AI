@@ -20,7 +20,9 @@ ENV/
 .chroma/
 .pytest_cache/
 .coverage
+coverage.xml
 htmlcov/
+eval-report.json
 .mypy_cache/
 .ruff_cache/
 

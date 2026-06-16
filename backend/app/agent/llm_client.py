@@ -82,8 +82,10 @@ class AnthropicProvider(LLMProvider):
 
     def complete(self, system_prompt: str, user_prompt: str) -> str:
         # Reinforce JSON-only output; Anthropic has no explicit JSON mode, so we
-        # rely on clear instructions plus assistant prefill of "{" to anchor the
-        # response as JSON.
+        # rely on clear instructions. (Assistant-message prefill is not used:
+        # newer Claude models reject conversations that end on an assistant
+        # turn, and the response parser already extracts JSON from any wrapping
+        # prose/markdown fences.)
         system = system_prompt.rstrip() + "\n\nRespond with a single JSON object. No prose, no markdown fences."
 
         try:
@@ -94,7 +96,6 @@ class AnthropicProvider(LLMProvider):
                 system=system,
                 messages=[
                     {"role": "user", "content": user_prompt},
-                    {"role": "assistant", "content": "{"},
                 ],
             )
         except self._anthropic.APITimeoutError as exc:
@@ -103,8 +104,7 @@ class AnthropicProvider(LLMProvider):
             raise LLMError(f"Anthropic API error: {exc}") from exc
 
         parts = [b.text for b in response.content if getattr(b, "type", None) == "text"]
-        # Re-attach the prefill "{" so the text is a complete JSON object.
-        return "{" + "".join(parts)
+        return "".join(parts)
 
 
 class OpenAIProvider(LLMProvider):

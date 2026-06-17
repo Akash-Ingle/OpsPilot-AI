@@ -12,7 +12,21 @@ from __future__ import annotations
 
 import pytest
 
+from app.core.rate_limit import limiter as _limiter
 from app.services import memory_service as _memory_service
+
+
+@pytest.fixture(autouse=True)
+def _disable_rate_limiting():
+    """Turn off per-IP rate limiting so repeated endpoint calls in the suite
+    don't trip the limiter. Tests that specifically exercise limiting can
+    re-enable it locally."""
+    previous = _limiter.enabled
+    _limiter.enabled = False
+    try:
+        yield
+    finally:
+        _limiter.enabled = previous
 
 
 class _DisabledMemoryService:

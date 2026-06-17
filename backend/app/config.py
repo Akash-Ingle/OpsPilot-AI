@@ -39,6 +39,12 @@ class Settings(BaseSettings):
 
     vector_db_path: str = "./.chroma"
 
+    # Per-IP rate limiting (protects the paid LLM endpoints on a public demo).
+    # Limits use slowapi syntax, e.g. "10/minute" or "100/hour;1000/day".
+    rate_limit_enabled: bool = True
+    rate_limit_analyze: str = "10/minute"
+    rate_limit_simulate: str = "20/minute"
+
     # Stored as a raw string in the env so pydantic-settings doesn't try to
     # JSON-decode it. Consumers should read `settings.cors_origins` (the
     # property below) to get the parsed list. Reads the `CORS_ORIGINS` env var.

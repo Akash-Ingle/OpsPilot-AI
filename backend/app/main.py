@@ -4,11 +4,14 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from slowapi import _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
 
 from app import __version__
 from app.api.routes import api_router
 from app.config import settings
 from app.core.logging import configure_logging, logger
+from app.core.rate_limit import limiter
 from app.database import init_db
 
 
@@ -29,6 +32,12 @@ def create_app() -> FastAPI:
         description="Autonomous DevOps AI agent - log analysis, anomaly detection, and multi-step LLM reasoning.",
         lifespan=lifespan,
     )
+
+    # Per-IP rate limiting for the expensive (LLM-backed) endpoints. Registering
+    # the limiter on app.state + the 429 handler is enough for the per-route
+    # `@limiter.limit(...)` decorators; cheap routes stay unlimited.
+    app.state.limiter = limiter
+    app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
     app.add_middleware(
         CORSMiddleware,

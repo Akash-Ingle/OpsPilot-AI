@@ -1,0 +1,63 @@
+# Render Blueprint - deploys the full OpsPilot-AI stack (backend + frontend) as
+# two Docker web services. Create via Render Dashboard -> "New +" -> "Blueprint"
+# and point it at this repo. Set the GEMINI_API_KEY secret in the dashboard.
+#
+# Predicted public URLs (assuming the service names below are available):
+#   backend : https://opspilot-ai-backend.onrender.com
+#   frontend: https://opspilot-ai-frontend.onrender.com
+# If Render assigns different URLs (names taken), update the two cross-service
+# URLs below (CORS_ORIGINS on the backend, NEXT_PUBLIC_API_URL on the frontend).
+
+services:
+  - type: web
+    name: opspilot-ai-backend
+    runtime: docker
+    repo: https://github.com/Akash-Ingle/OpsPilot-AI
+    branch: main
+    rootDir: backend
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    plan: free
+    region: oregon
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      - key: APP_ENV
+        value: production
+      - key: DEBUG
+        value: "false"
+      - key: LLM_PROVIDER
+        value: gemini
+      - key: LLM_MODEL
+        value: gemini-2.0-flash
+      # Set this secret in the Render dashboard (never commit a key).
+      - key: GEMINI_API_KEY
+        sync: false
+      # Allow the deployed frontend origin to call the API.
+      - key: CORS_ORIGINS
+        value: https://opspilot-ai-frontend.onrender.com
+      - key: RATE_LIMIT_ENABLED
+        value: "true"
+      - key: RATE_LIMIT_ANALYZE
+        value: 10/minute
+      - key: RATE_LIMIT_SIMULATE
+        value: 20/minute
+
+  - type: web
+    name: opspilot-ai-frontend
+    runtime: docker
+    repo: https://github.com/Akash-Ingle/OpsPilot-AI
+    branch: main
+    rootDir: frontend
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    plan: free
+    region: oregon
+    healthCheckPath: /
+    autoDeploy: true
+    envVars:
+      # Browser-facing API URL. Render passes this to the Docker build as a
+      # build arg (the Dockerfile declares `ARG NEXT_PUBLIC_API_URL`), so it is
+      # inlined into the client bundle at build time.
+      - key: NEXT_PUBLIC_API_URL
+        value: https://opspilot-ai-backend.onrender.com/api/v1

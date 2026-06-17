@@ -2,11 +2,13 @@
 
 from typing import List, Literal, Optional
 
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, HTTPException, Request, status
 from pydantic import BaseModel, Field
 
 from app.api.deps import DBSession
+from app.config import settings
 from app.core.logging import logger
+from app.core.rate_limit import limiter
 from app.models.log import Log
 from app.schemas.log import LogOut
 from app.services.log_generator import SCENARIO_META, generate_scenario
@@ -70,7 +72,10 @@ def list_available_scenarios() -> List[ScenarioInfo]:
     status_code=status.HTTP_201_CREATED,
     summary="Generate (and optionally persist) a synthetic log scenario",
 )
-def run_simulation(payload: SimulateRequest, db: DBSession) -> SimulateResponse:
+@limiter.limit(settings.rate_limit_simulate)
+def run_simulation(
+    request: Request, payload: SimulateRequest, db: DBSession
+) -> SimulateResponse:
     try:
         generated = generate_scenario(
             payload.scenario,

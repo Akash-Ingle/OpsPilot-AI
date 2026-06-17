@@ -3,12 +3,14 @@
 import json
 from typing import List
 
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, HTTPException, Request, status
 
 from app.agent.llm_client import LLMError, LLMTimeoutError, LLMValidationError
 from app.agent.orchestrator import run_agent_loop
 from app.api.deps import DBSession
+from app.config import settings
 from app.core.logging import logger
+from app.core.rate_limit import limiter
 from app.models.analysis import Analysis
 from app.models.incident import Incident
 from app.models.log import Log
@@ -25,7 +27,10 @@ router = APIRouter()
     status_code=status.HTTP_201_CREATED,
     summary="Run a multi-step agent analysis over recent logs",
 )
-def trigger_analysis(payload: AnalyzeRequest, db: DBSession) -> AnalyzeResponse:
+@limiter.limit(settings.rate_limit_analyze)
+def trigger_analysis(
+    request: Request, payload: AnalyzeRequest, db: DBSession
+) -> AnalyzeResponse:
     """Analyze the most recent logs, detect anomalies, run the multi-step agent
     loop (with tool dispatch), persist an incident + analysis, and return the
     structured result together with end-to-end observability.

@@ -220,6 +220,34 @@ curl -X POST localhost:8000/api/v1/analyze  -H "content-type: application/json" 
 
 ---
 
+## Deploy a public demo (Render)
+
+The repo ships a [`render.yaml`](./render.yaml) Blueprint that deploys both
+services (backend + frontend) as Docker web services on Render's free tier.
+
+It's configured for a **safe public demo**:
+- **Google Gemini free tier** as the LLM (`LLM_PROVIDER=gemini`), so the demo
+  costs ~nothing instead of spending a paid API budget.
+- **Per-IP rate limiting** on the expensive endpoints (`/analyze`, `/simulate`)
+  so a bot can't run up usage. Tune via `RATE_LIMIT_*` env vars.
+
+Steps:
+1. Get a free Gemini key from [Google AI Studio](https://aistudio.google.com/apikey).
+2. In Render: **New + → Blueprint**, point it at this repo. It reads `render.yaml`.
+3. Set the **`GEMINI_API_KEY`** secret on the backend service (it's `sync: false`).
+4. Deploy. The browser bundle is built with `NEXT_PUBLIC_API_URL` pointing at the
+   backend; the backend's `CORS_ORIGINS` allows the frontend origin.
+
+Notes:
+- Service URLs are predicted as `https://opspilot-ai-{backend,frontend}.onrender.com`.
+  If those names are taken and Render assigns different URLs, update
+  `CORS_ORIGINS` (backend) and `NEXT_PUBLIC_API_URL` (frontend) to match.
+- Free instances **cold-start** (~50s) after idling and have **ephemeral disk**,
+  so the SQLite DB + Chroma store reset on redeploy — fine for a demo. For
+  persistence, use a paid instance with a disk or attach managed Postgres.
+
+---
+
 ## API reference
 
 Base prefix: `/api/v1`

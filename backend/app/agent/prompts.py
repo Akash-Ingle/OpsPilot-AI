@@ -82,6 +82,20 @@ service is STILL SERVING requests at all - even slowly, even with some errors,
 - When torn between two levels, choose the LOWER one unless the bright-line test
   for "critical" is clearly met.
 
+WORKED EXAMPLES (apply the bright-line test literally):
+- p99 latency climbing into the seconds, "slow_request", 504 Gateway Timeout, or
+  "upstream_timeout" entries, while the service is still returning responses ->
+  "high". A 504/timeout means a DEPENDENCY is slow, NOT that this service is
+  down. Latency spikes are degradation, so they are "high", NEVER "critical".
+- A datastore/cache/upstream is slow or intermittently erroring while requests
+  still complete -> "high".
+- Primary datastore fully unreachable so requests cannot complete at all, a
+  connection pool permanently exhausted with the service no longer serving, or a
+  process OOM-killed / crash-looping (exit 137 / SIGKILL) -> "critical".
+Reminder: if you are not seeing direct evidence of a COMPLETE outage, data loss,
+or a breach, the ceiling is "high" - and if your "critical" call is inferred
+rather than directly evidenced, you are probably wrong; downgrade to "high".
+
 CONFIDENCE CALIBRATION (be honest, not optimistic - do NOT default to high):
 - 0.90-1.00: logs unambiguously show the root cause with a clear failure
   signature and no strong alternative explanation.

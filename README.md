@@ -109,18 +109,18 @@ The eval harness scores each diagnosis against a scenario's ground truth on thre
 
 **Fix:** added a severity **bright-line rubric** ("critical" only for full outage / data loss / breach; latency degradation maps to "high") plus a **confidence-calibration rubric** to the system prompt.
 
-**After** (tuned prompt, 9 graded runs = 3 scenarios × 3 seeds):
+**After** (tuned prompt, 9 graded runs = 3 scenarios × seeds 1–3):
 
 | Scenario          | Accuracy | Root-cause acc. | Severity acc. | Mean score |
 | ----------------- | -------- | --------------- | ------------- | ---------- |
 | `database_failure`| 100%     | 100%            | 100%          | 1.00       |
 | `memory_leak`     | 100%     | 100%            | 100%          | 1.00       |
-| `latency_spike`   | 100%     | 100%            | 100%          | 1.00       |
-| **Overall**       | **100%** | **100%**        | **100%**      | **1.00**   |
+| `latency_spike`   | 67%      | 67%             | **100%**      | 0.91       |
+| **Overall**       | **89%**  | **89%**         | **100%**      | **0.97**   |
 
-`latency_spike` now classifies as `high` instead of `critical`, lifting overall accuracy **60% → 100%**. (With zero incorrect predictions remaining, there is no longer a calibration gap to measure — the next step is to add harder/ambiguous scenarios that re-introduce errors to keep stress-testing calibration.)
+The fix **eliminated the severity over-escalation**: `latency_spike` severity accuracy went **0% → 100%** (it now classifies as `high`, never `critical`), lifting overall accuracy **60% → 89%**. The one remaining miss is a *root-cause keyword* threshold miss on a single seed — not a severity error — and the calibration gap is now positive (mean confidence 0.92 when correct vs. 0.87 when wrong). Next steps: widen the root-cause keyword set and add ≥5 seeds/scenario for a more stable mean.
 
-> Reproduce: start the backend, then for each scenario `POST /simulate` → `POST /analyze` → `POST /evaluate`, and read `GET /evaluate/summary`.
+> Reproduce: `cd backend && python scripts/run_eval.py --seeds 1,2,3` (prints this table + calibration; needs an LLM key in `.env`).
 
 ---
 

@@ -16,9 +16,9 @@ OpsPilot-AI is built for the on-call workflow. When a service degrades, an engin
 - [Evaluation results](#evaluation-results)
 - [Tech stack](#tech-stack)
 - [Quickstart](#quickstart)
+- [Deploy a public demo](#deploy-a-public-demo-render)
 - [API reference](#api-reference)
 - [Repository layout](#repository-layout)
-- [Roadmap](#roadmap)
 
 ---
 
@@ -118,7 +118,18 @@ The eval harness scores each diagnosis against a scenario's ground truth on thre
 | `latency_spike`   | 67%      | 67%             | **100%**      | 0.91       |
 | **Overall**       | **89%**  | **89%**         | **100%**      | **0.97**   |
 
-The fix **eliminated the severity over-escalation**: `latency_spike` severity accuracy went **0% → 100%** (it now classifies as `high`, never `critical`), lifting overall accuracy **60% → 89%**. The one remaining miss is a *root-cause keyword* threshold miss on a single seed — not a severity error — and the calibration gap is now positive (mean confidence 0.92 when correct vs. 0.87 when wrong). Next steps: widen the root-cause keyword set and add ≥5 seeds/scenario for a more stable mean.
+The fix **eliminated the severity over-escalation**: `latency_spike` severity accuracy went **0% → 100%** (it now classifies as `high`, never `critical`), lifting overall accuracy **60% → 89%**. The calibration gap is now positive (mean confidence 0.92 when correct vs. 0.87 when wrong), so the agent's confidence is a meaningful signal.
+
+**On the public demo's model (`gemini-2.5-flash-lite`, 9 graded runs):**
+
+| Scenario          | Accuracy | Severity acc. | Mean score |
+| ----------------- | -------- | ------------- | ---------- |
+| `database_failure`| 100%     | 100%          | 1.00       |
+| `memory_leak`     | 100%     | 100%          | 1.00       |
+| `latency_spike`   | 33%      | **100%**      | 0.68       |
+| **Overall**       | **78%**  | **100%**      | **0.89**   |
+
+The severity bright-line rubric **generalizes across models**: on Gemini, `latency_spike` is classified `high` on every run (zero over-escalation), same as Claude. The lower overall number is the same *root-cause keyword* sensitivity (Gemini phrases the latency diagnosis differently), not a severity regression. The CI gate runs this exact eval against Gemini on every push.
 
 > Reproduce: `cd backend && python scripts/run_eval.py --seeds 1,2,3` (prints this table + calibration; needs an LLM key in `.env`).
 
@@ -226,10 +237,15 @@ The repo ships a [`render.yaml`](./render.yaml) Blueprint that deploys both
 services (backend + frontend) as Docker web services on Render's free tier.
 
 It's configured for a **safe public demo**:
-- **Google Gemini free tier** as the LLM (`LLM_PROVIDER=gemini`), so the demo
-  costs ~nothing instead of spending a paid API budget.
+- **Google Gemini free tier** (`LLM_PROVIDER=gemini`, `gemini-2.5-flash-lite`),
+  so the demo costs **$0** instead of spending a paid API budget.
 - **Per-IP rate limiting** on the expensive endpoints (`/analyze`, `/simulate`)
   so a bot can't run up usage. Tune via `RATE_LIMIT_*` env vars.
+- **Cached-analysis fallback** (`DEMO_CACHE_ENABLED=true`): the Gemini free tier
+  allows only ~20 `/analyze` calls/day total, so once that's exhausted the API
+  serves a pre-computed analysis for the matching scenario (flagged with
+  `served_from_cache`) instead of erroring. The demo never breaks; `/simulate`
+  is unaffected because it uses no LLM.
 
 Steps:
 1. Get a free Gemini key from [Google AI Studio](https://aistudio.google.com/apikey).
@@ -242,9 +258,9 @@ Notes:
 - Service URLs are predicted as `https://opspilot-ai-{backend,frontend}.onrender.com`.
   If those names are taken and Render assigns different URLs, update
   `CORS_ORIGINS` (backend) and `NEXT_PUBLIC_API_URL` (frontend) to match.
-- Free instances **cold-start** (~50s) after idling and have **ephemeral disk**,
-  so the SQLite DB + Chroma store reset on redeploy — fine for a demo. For
-  persistence, use a paid instance with a disk or attach managed Postgres.
+- Free instances cold-start after idling and use ephemeral disk, so the SQLite DB
+  and Chroma store reset on redeploy. For persistence, attach a disk on a paid
+  instance or point `DATABASE_URL` at managed Postgres.
 
 ---
 
@@ -292,34 +308,6 @@ OpsPilot-AI/
 
 ---
 
-## Roadmap
-
-A focused 30-day plan to take OpsPilot from "works end-to-end" to "portfolio flagship".
-
-### Week 1 — Close the calibration gap (highest signal)
-- [x] Tune the system prompt's severity rubric so `latency_spike` maps to `high`, not `critical`.
-- [x] Add a confidence-calibration rubric to the prompt; re-ran the eval — accuracy lifted **60% → 100%**.
-- [ ] Add harder/ambiguous scenarios that re-introduce errors, to keep stress-testing severity calibration.
-- [ ] Expand the eval to ≥ 5 seeds per scenario for a more stable mean.
-
-### Week 2 — Make the tools real
-- [x] `fetch_logs` queries the live `logs` table by service + time window.
-- [ ] `get_metrics` reads real metrics (Prometheus/CloudWatch) instead of mocks.
-- [ ] `restart_service` / `scale_service` integrate with a real (sandboxed) Kubernetes client behind a dry-run flag.
-
-### Week 3 — Productionize
-- [x] Dockerfile (backend + frontend) + `docker compose up` for the full stack.
-- [ ] Add an optional Postgres service/profile to compose.
-- [ ] Streaming log ingestion endpoint + a small Kubernetes/Fluent Bit forwarder example.
-- [x] CI (GitHub Actions): `pytest` + coverage and a Next.js lint/type-check/build run on every push/PR; the agent eval runs as a tracked accuracy/calibration signal (`backend/scripts/run_eval.py`).
-
-### Week 4 — Polish & tell the story
-- [ ] Add a "compare runs" view to the dashboard (model A vs model B accuracy).
-- [ ] Architecture deep-dive doc + a short demo GIF.
-- [ ] Cost/latency benchmarks per provider.
-
----
-
 ## License
 
-MIT recommended — add a `LICENSE` file before publishing.
+Released under the [MIT License](./LICENSE).

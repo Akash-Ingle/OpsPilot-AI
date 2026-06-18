@@ -45,6 +45,12 @@ class Settings(BaseSettings):
     rate_limit_analyze: str = "10/minute"
     rate_limit_simulate: str = "20/minute"
 
+    # Public-demo safety net: when the live LLM call fails (e.g. the free-tier
+    # daily quota is exhausted), fall back to a pre-computed analysis for the
+    # matching built-in scenario instead of returning an error. Off by default
+    # so local/dev surfaces real errors; enabled on the hosted demo.
+    demo_cache_enabled: bool = False
+
     # Stored as a raw string in the env so pydantic-settings doesn't try to
     # JSON-decode it. Consumers should read `settings.cors_origins` (the
     # property below) to get the parsed list. Reads the `CORS_ORIGINS` env var.

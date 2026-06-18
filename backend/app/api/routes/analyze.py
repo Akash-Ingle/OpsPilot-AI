@@ -5,6 +5,7 @@ from typing import List
 
 from fastapi import APIRouter, HTTPException, Request, status
 
+from app.agent.demo_cache import cached_run_for_logs
 from app.agent.llm_client import LLMError, LLMTimeoutError, LLMValidationError
 from app.agent.orchestrator import run_agent_loop
 from app.api.deps import DBSession
@@ -62,27 +63,40 @@ def trigger_analysis(
     anomalies = detect_anomalies(logs)
     logger.info("analyze: detected {} anomaly signal(s)", len(anomalies))
 
-    # 3. Call the agent (multi-step, with tool dispatch).
+    # 3. Call the agent (multi-step, with tool dispatch). On a public demo the
+    #    free-tier LLM can run out of daily quota; rather than failing the
+    #    request we fall back to a pre-computed analysis for the matching
+    #    scenario (only when demo_cache_enabled).
+    served_from_cache = False
     try:
         run = run_agent_loop(logs, anomalies, max_iterations=payload.max_steps)
-    except LLMTimeoutError as exc:
-        logger.error("analyze: LLM call timed out: {}", exc)
-        raise HTTPException(
-            status_code=status.HTTP_504_GATEWAY_TIMEOUT,
-            detail="LLM provider timed out. Please retry.",
-        ) from exc
-    except LLMValidationError as exc:
-        logger.error("analyze: LLM returned invalid structured output: {}", exc.errors)
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail="LLM returned an invalid response after retries.",
-        ) from exc
-    except LLMError as exc:
-        logger.error("analyze: LLM call failed: {}", exc)
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"LLM call failed: {exc}",
-        ) from exc
+    except (LLMTimeoutError, LLMValidationError, LLMError) as exc:
+        cached = cached_run_for_logs(logs) if settings.demo_cache_enabled else None
+        if cached is not None:
+            logger.warning(
+                "analyze: live LLM unavailable ({}); serving cached demo analysis",
+                exc,
+            )
+            run = cached
+            served_from_cache = True
+        elif isinstance(exc, LLMTimeoutError):
+            logger.error("analyze: LLM call timed out: {}", exc)
+            raise HTTPException(
+                status_code=status.HTTP_504_GATEWAY_TIMEOUT,
+                detail="LLM provider timed out. Please retry.",
+            ) from exc
+        elif isinstance(exc, LLMValidationError):
+            logger.error("analyze: LLM returned invalid structured output: {}", exc.errors)
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail="LLM returned an invalid response after retries.",
+            ) from exc
+        else:
+            logger.error("analyze: LLM call failed: {}", exc)
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail=f"LLM call failed: {exc}",
+            ) from exc
 
     result = run.final
     structured = result.model_dump(mode="json")
@@ -159,4 +173,5 @@ def trigger_analysis(
         anomalies_detected=len(anomalies),
         final=result,
         observability=observability,
+        served_from_cache=served_from_cache,
     )

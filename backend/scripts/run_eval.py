@@ -97,8 +97,41 @@ class _RunOutcome:
     error: Optional[str] = None
 
 
-def _run_one(scenario: str, seed: int, max_steps: int) -> _RunOutcome:
+_TRANSIENT_MARKERS = (
+    "503",
+    "unavailable",
+    "overloaded",
+    "high demand",
+    "429",
+    "resource_exhausted",
+    "timeout",
+    "deadline",
+)
+
+
+def _run_loop_with_retry(logs, anomalies, max_steps, retries: int = 2):
+    """Run the agent loop, retrying transient provider errors (503/429/timeout)
+    with backoff. Hard errors (bad key, unsupported model) are raised immediately."""
+    import time
+
+    from app.agent.llm_client import LLMError, LLMTimeoutError
     from app.agent.orchestrator import run_agent_loop
+
+    last_exc: Exception | None = None
+    for attempt in range(retries + 1):
+        try:
+            return run_agent_loop(logs, anomalies, max_iterations=max_steps)
+        except (LLMError, LLMTimeoutError) as exc:
+            last_exc = exc
+            transient = any(m in str(exc).lower() for m in _TRANSIENT_MARKERS)
+            if transient and attempt < retries:
+                time.sleep(3 * (attempt + 1))
+                continue
+            raise
+    raise last_exc  # pragma: no cover - loop always returns or raises above
+
+
+def _run_one(scenario: str, seed: int, max_steps: int) -> _RunOutcome:
     from app.services.anomaly_detector import detect_anomalies
     from app.services.evaluation_service import evaluate_prediction, get_ground_truth
     from app.services.log_generator import generate_scenario
@@ -108,7 +141,7 @@ def _run_one(scenario: str, seed: int, max_steps: int) -> _RunOutcome:
     logs = _materialize_logs(entries)
     anomalies = detect_anomalies(logs)  # type: ignore[arg-type]
 
-    run = run_agent_loop(logs, anomalies, max_iterations=max_steps)  # type: ignore[arg-type]
+    run = _run_loop_with_retry(logs, anomalies, max_steps)  # type: ignore[arg-type]
     predicted: Dict[str, Any] = run.final.model_dump(mode="json")
     result = evaluate_prediction(predicted, truth)
 

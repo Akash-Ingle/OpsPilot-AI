@@ -186,3 +186,6 @@ class AnalyzeResponse(BaseModel):
     anomalies_detected: int
     final: LLMStructuredOutput
     observability: AgentObservability
+    # True when the live LLM was unavailable (e.g. free-tier quota exhausted) and
+    # a pre-computed analysis for the matching demo scenario was served instead.
+    served_from_cache: bool = False

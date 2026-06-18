@@ -150,7 +150,7 @@ class OpenAIProvider(LLMProvider):
 
 
 class GeminiProvider(LLMProvider):
-    """Google Gemini provider — supports the free tier (e.g. gemini-2.0-flash).
+    """Google Gemini provider — supports the free tier (e.g. gemini-2.5-flash-lite).
 
     Uses the unified `google-genai` SDK and the model's native JSON mode
     (`response_mime_type="application/json"`).

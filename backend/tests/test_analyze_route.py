@@ -338,6 +338,85 @@ def test_analyze_generic_llm_error_returns_502(client, monkeypatch):
     assert "api key" in res.json()["detail"].lower()
 
 
+def _seed_db_failure_logs(session_factory) -> None:
+    """Seed logs that clearly match the database_failure scenario markers."""
+    db = session_factory()
+    base = datetime(2026, 4, 23, 14, 0, tzinfo=timezone.utc)
+    messages = [
+        "connection timeout to db-primary after 5000ms pool=orders-pool waiting=12",
+        "FATAL: connection pool exhausted (size=20 in_use=20) queue_depth=80",
+        "request failed service=orders-svc code=UPSTREAM_TIMEOUT elapsed_ms=6000",
+    ]
+    for i, msg in enumerate(messages * 2):
+        db.add(
+            Log(
+                timestamp=base + timedelta(seconds=i * 5),
+                service_name="orders-svc",
+                severity="error",
+                message=msg,
+            )
+        )
+    db.commit()
+    db.close()
+
+
+def test_analyze_falls_back_to_cache_when_enabled(client, monkeypatch):
+    """With demo_cache_enabled, an LLM failure on recognizable logs serves a
+    cached analysis (201) instead of a 502."""
+    tc, session_factory = client
+    _seed_db_failure_logs(session_factory)
+
+    monkeypatch.setattr(settings, "demo_cache_enabled", True)
+
+    def boom(logs, anomalies, max_iterations=5):
+        raise LLMError("429 RESOURCE_EXHAUSTED")
+
+    monkeypatch.setattr(analyze_route, "run_agent_loop", boom)
+
+    res = tc.post(settings.api_v1_prefix + "/analyze", json={"limit": 50})
+    assert res.status_code == 201, res.text
+    body = res.json()
+    assert body["served_from_cache"] is True
+    assert body["final"]["severity"] == "critical"
+    assert body["incident_id"] > 0
+    assert body["analysis_id"] > 0
+
+
+def test_analyze_cache_disabled_still_errors(client, monkeypatch):
+    """Default (cache disabled): an LLM failure still surfaces as a 502 even on
+    recognizable logs."""
+    tc, session_factory = client
+    _seed_db_failure_logs(session_factory)
+
+    # demo_cache_enabled defaults to False; do not enable it here.
+    def boom(logs, anomalies, max_iterations=5):
+        raise LLMError("429 RESOURCE_EXHAUSTED")
+
+    monkeypatch.setattr(analyze_route, "run_agent_loop", boom)
+
+    res = tc.post(settings.api_v1_prefix + "/analyze", json={"limit": 50})
+    assert res.status_code == 502
+
+
+def test_analyze_cache_skipped_for_unrecognized_logs(client, monkeypatch):
+    """Even with the cache enabled, logs that match no scenario must not be
+    force-fit to a canned answer - the error propagates."""
+    tc, session_factory = client
+    _seed_logs(session_factory, count=5, service="payments")  # generic logs
+
+    monkeypatch.setattr(settings, "demo_cache_enabled", True)
+
+    def boom(logs, anomalies, max_iterations=5):
+        raise LLMError("429 RESOURCE_EXHAUSTED")
+
+    monkeypatch.setattr(analyze_route, "run_agent_loop", boom)
+
+    res = tc.post(settings.api_v1_prefix + "/analyze", json={"limit": 50})
+    # _seed_logs uses "connection timeout to db-primary #i" -> only 1 marker
+    # ("db-primary"), below the 2-marker threshold, so no scenario matches.
+    assert res.status_code == 502
+
+
 # ---------------------------------------------------------------------------
 # Observability
 # ---------------------------------------------------------------------------

@@ -28,8 +28,10 @@ services:
         value: "false"
       - key: LLM_PROVIDER
         value: gemini
+      # gemini-2.5-flash-lite is the cheapest model with an active free tier.
+      # (gemini-2.0-flash currently has a 0-request free-tier quota.)
       - key: LLM_MODEL
-        value: gemini-2.0-flash
+        value: gemini-2.5-flash-lite
       # Set this secret in the Render dashboard (never commit a key).
       - key: GEMINI_API_KEY
         sync: false
@@ -42,6 +44,10 @@ services:
         value: 10/minute
       - key: RATE_LIMIT_SIMULATE
         value: 20/minute
+      # When the free-tier LLM quota is exhausted, serve a pre-computed analysis
+      # for the matching demo scenario instead of erroring, so the demo never breaks.
+      - key: DEMO_CACHE_ENABLED
+        value: "true"
 
   - type: web
     name: opspilot-ai-frontend

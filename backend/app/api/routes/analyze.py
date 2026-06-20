@@ -3,7 +3,7 @@
 import json
 from typing import List
 
-from fastapi import APIRouter, HTTPException, Request, status
+from fastapi import APIRouter, HTTPException, Request, Response, status
 
 from app.agent.demo_cache import cached_run_for_logs
 from app.agent.llm_client import LLMError, LLMTimeoutError, LLMValidationError
@@ -30,7 +30,7 @@ router = APIRouter()
 )
 @limiter.limit(settings.rate_limit_analyze)
 def trigger_analysis(
-    request: Request, payload: AnalyzeRequest, db: DBSession
+    request: Request, response: Response, payload: AnalyzeRequest, db: DBSession
 ) -> AnalyzeResponse:
     """Analyze the most recent logs, detect anomalies, run the multi-step agent
     loop (with tool dispatch), persist an incident + analysis, and return the

@@ -398,6 +398,39 @@ def test_analyze_cache_disabled_still_errors(client, monkeypatch):
     assert res.status_code == 502
 
 
+def test_rate_limited_routes_inject_headers_when_limiter_enabled(client, monkeypatch):
+    """Regression: with the limiter enabled, /analyze and /simulate must return
+    normally with X-RateLimit headers. slowapi(headers_enabled=True) raises a 500
+    unless the route declares a `response: Response` param, and the rest of the
+    suite runs with the limiter disabled, so this path needs explicit coverage."""
+    from app.core.rate_limit import limiter
+
+    tc, session_factory = client
+    _seed_logs(session_factory, count=5)
+    monkeypatch.setattr(
+        analyze_route,
+        "run_agent_loop",
+        lambda logs, anomalies, max_iterations=5: _make_run_result(),
+    )
+
+    limiter.enabled = True
+    try:
+        analyze_res = tc.post(settings.api_v1_prefix + "/analyze", json={})
+        simulate_res = tc.post(
+            settings.api_v1_prefix + "/simulate",
+            json={"scenario": "memory_leak", "seed": 1, "persist": False},
+        )
+    finally:
+        limiter.enabled = False
+
+    assert analyze_res.status_code == 201, analyze_res.text
+    assert simulate_res.status_code == 201, simulate_res.text
+    analyze_headers = {k.lower() for k in analyze_res.headers}
+    simulate_headers = {k.lower() for k in simulate_res.headers}
+    assert "x-ratelimit-limit" in analyze_headers
+    assert "x-ratelimit-limit" in simulate_headers
+
+
 def test_analyze_cache_skipped_for_unrecognized_logs(client, monkeypatch):
     """Even with the cache enabled, logs that match no scenario must not be
     force-fit to a canned answer - the error propagates."""

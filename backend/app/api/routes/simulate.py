@@ -2,7 +2,7 @@
 
 from typing import List, Literal, Optional
 
-from fastapi import APIRouter, HTTPException, Request, status
+from fastapi import APIRouter, HTTPException, Request, Response, status
 from pydantic import BaseModel, Field
 
 from app.api.deps import DBSession
@@ -74,7 +74,7 @@ def list_available_scenarios() -> List[ScenarioInfo]:
 )
 @limiter.limit(settings.rate_limit_simulate)
 def run_simulation(
-    request: Request, payload: SimulateRequest, db: DBSession
+    request: Request, response: Response, payload: SimulateRequest, db: DBSession
 ) -> SimulateResponse:
     try:
         generated = generate_scenario(

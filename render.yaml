@@ -64,6 +64,8 @@ services:
     envVars:
       # Browser-facing API URL. Render passes this to the Docker build as a
       # build arg (the Dockerfile declares `ARG NEXT_PUBLIC_API_URL`), so it is
-      # inlined into the client bundle at build time.
+      # inlined into the client bundle at build time. The backend service name
+      # was taken, so Render assigned it a `-ka0z` suffix; this points at that
+      # real URL.
       - key: NEXT_PUBLIC_API_URL
-        value: https://opspilot-ai-backend.onrender.com/api/v1
+        value: https://opspilot-ai-backend-ka0z.onrender.com/api/v1

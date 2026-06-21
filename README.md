@@ -2,15 +2,18 @@
 
 [![CI](https://github.com/Akash-Ingle/OpsPilot-AI/actions/workflows/ci.yml/badge.svg)](https://github.com/Akash-Ingle/OpsPilot-AI/actions/workflows/ci.yml)
 
-> An autonomous **AIOps incident-analysis agent**: it ingests service logs, detects anomalies, and runs a multi-step LLM reasoning loop to produce a root cause, a remediation plan, and a calibrated confidence score — then grades itself against ground truth.
+> An autonomous **AIOps incident-analysis agent**: point your app's logs at it, and it watches the stream, detects anomalies, runs a multi-step LLM reasoning loop to produce a root cause + remediation + calibrated confidence, opens an incident, and alerts you in Slack — then grades itself against ground truth.
 
 OpsPilot-AI is built for the on-call workflow. When a service degrades, an engineer normally greps logs, correlates errors, checks metrics, and forms a hypothesis. OpsPilot does that first pass automatically and shows its work: every reasoning step, every tool call, and every log line it used as evidence.
+
+**Why not just paste logs into ChatGPT?** Because a chat box is *pull* — you have to already know something broke, then copy the relevant lines out of thousands. OpsPilot is *push*: it ingests your live log stream, surfaces the anomaly, pulls the relevant lines automatically, remembers similar past incidents, and pings you with the diagnosis before you open a dashboard.
 
 ---
 
 ## Table of contents
 
 - [What it does](#what-it-does)
+- [Connect your app (the product loop)](#connect-your-app-the-product-loop)
 - [Architecture](#architecture)
 - [The agent loop](#the-agent-loop)
 - [Evaluation results](#evaluation-results)
@@ -24,13 +27,60 @@ OpsPilot-AI is built for the on-call workflow. When a service degrades, an engin
 
 ## What it does
 
-- **Log ingestion** — upload raw/JSON logs via the API, or generate realistic incidents with the built-in scenario simulator (`database_failure`, `memory_leak`, `latency_spike`).
+- **Live log ingestion + always-on watching** — apps ship logs to a keyed `/ingest` endpoint (a 2-line snippet). OpsPilot watches each project's stream and, when anomalies trip, **auto-opens an incident and alerts Slack** — no human has to ask. (Or generate realistic incidents with the built-in simulator: `database_failure`, `memory_leak`, `latency_spike`.)
 - **Anomaly detection** — a rules-based detector flags error spikes, repeated errors, and latency-threshold breaches over a sliding window.
 - **Agentic root-cause analysis** — a multi-step LLM loop that re-reasons until it is confident, optionally calling **tools** (`fetch_logs`, `get_metrics`, `restart_service`, `scale_service`) to gather more evidence mid-analysis.
 - **Structured, validated output** — a strict JSON contract (issue, root cause, fix, severity, confidence, ordered reasoning steps, cited log lines) enforced by Pydantic.
 - **Incident memory** — diagnosed incidents are embedded into a vector store (ChromaDB) so future analyses retrieve similar past incidents as grounding context.
 - **Self-evaluation** — an offline harness grades predictions against known ground truth and reports accuracy + **confidence calibration**.
 - **Dashboard** — a Next.js + TypeScript UI showing the incident list, the agent's chain of thought, the tool-usage timeline, and a confidence sparkline — plus a **one-click "Simulate incident"** flow that generates logs and runs the agent live from the browser.
+
+---
+
+## Connect your app (the product loop)
+
+This is what makes OpsPilot a tool rather than a prompt. The **Connect your app** page issues a project API key and a copy-paste snippet; from then on the loop is automatic:
+
+```mermaid
+flowchart LR
+    APP["Your app<br/>(logging handler)"] -->|"POST /ingest<br/>(Bearer key)"| ING["Ingest"]
+    ING --> WATCH{"Anomaly?<br/>(+ not in cooldown)"}
+    WATCH -->|no| WAIT["keep watching"]
+    WATCH -->|yes| AGENT["Run agent loop<br/>→ root cause + fix"]
+    AGENT --> INC["Open incident"]
+    INC --> SLACK["Slack alert<br/>severity · cause · fix · link"]
+    INC --> DASH["Dashboard"]
+```
+
+**Design notes that make it production-shaped:**
+
+- **Multi-tenant by API key.** Each project gets an `opsp_…` key; only its **SHA-256 hash** is stored (the raw key is shown once). Ingested logs and incidents are scoped to the project.
+- **Event-driven, not a cron.** The watcher runs as a background task triggered by ingestion, so it works even on a free-tier host that sleeps between requests.
+- **Cost guardrail.** A per-project **cooldown** caps auto-analysis to once per window, so a log flood can't spam the LLM or burn a free-tier quota. The cached-analysis fallback covers exhausted quota.
+- **Alerting that never breaks the path.** Slack delivery is best-effort and isolated — a webhook failure is logged, never propagated to ingestion.
+
+```python
+# The whole integration: a logging handler that ships logs to OpsPilot.
+import logging, requests
+
+class OpsPilotHandler(logging.Handler):
+    def emit(self, record):
+        try:
+            requests.post(
+                "https://<your-backend>/api/v1/ingest",
+                headers={"Authorization": "Bearer opsp_your_key"},
+                json={"logs": [{
+                    "service_name": record.name,
+                    "severity": record.levelname.lower(),
+                    "message": self.format(record),
+                }]},
+                timeout=5,
+            )
+        except Exception:
+            pass  # logging must never break the app
+
+logging.getLogger().addHandler(OpsPilotHandler())
+```
 
 ---
 
@@ -270,6 +320,10 @@ Base prefix: `/api/v1`
 
 | Method | Path                  | Description                                            |
 | ------ | --------------------- | ------------------------------------------------------ |
+| POST   | `/projects`           | Create a project, issue an API key (returned once)     |
+| GET    | `/projects/me`        | Current project + ingest/incident stats (API key)      |
+| PATCH  | `/projects/me`        | Set the Slack webhook / toggle alerts (API key)        |
+| POST   | `/ingest`             | Ship a batch of logs; triggers the watcher (API key)   |
 | POST   | `/logs/upload`        | Upload logs (text or JSON)                             |
 | GET    | `/logs`               | List / filter ingested logs                            |
 | GET    | `/incidents`          | List incidents                                         |
@@ -293,11 +347,11 @@ OpsPilot-AI/
 │   │   ├── main.py            # FastAPI entry point + lifespan
 │   │   ├── config.py          # env-driven settings
 │   │   ├── database.py        # SQLAlchemy engine / session / Base
-│   │   ├── models/            # ORM: Log, Incident, Analysis, Evaluation
+│   │   ├── models/            # ORM: Log, Incident, Analysis, Evaluation, Project
 │   │   ├── schemas/           # Pydantic request/response + LLM contract
-│   │   ├── api/routes/        # logs, incidents, analyze, simulate, evaluate
-│   │   ├── services/          # anomaly_detector, log_generator, memory, evaluation
-│   │   └── agent/             # prompts, tools, llm_client, orchestrator
+│   │   ├── api/routes/        # logs, incidents, analyze, simulate, evaluate, projects, ingest
+│   │   ├── services/          # anomaly_detector, watcher, alerting, api_key, memory, evaluation
+│   │   └── agent/             # prompts, tools, llm_client, orchestrator, demo_cache
 │   └── tests/                 # pytest suite
 └── frontend/
     └── src/

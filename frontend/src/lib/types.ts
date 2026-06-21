@@ -140,3 +140,30 @@ export interface AnalyzeResult {
   final: LLMStructuredOutput;
   observability: AgentObservability;
 }
+
+// --- Projects / ingestion (connect-your-app loop) --------------------------
+
+export interface ProjectCreated {
+  id: number;
+  name: string;
+  api_key: string; // shown only once
+  key_prefix: string;
+}
+
+export interface ProjectOut {
+  id: number;
+  name: string;
+  key_prefix: string;
+  alerts_enabled: boolean;
+  slack_configured: boolean;
+  last_auto_analysis_at: string | null;
+  log_count: number;
+  incident_count: number;
+  created_at: string;
+}
+
+export interface IngestResult {
+  ingested: number;
+  project_id: number;
+  watcher_scheduled: boolean;
+}

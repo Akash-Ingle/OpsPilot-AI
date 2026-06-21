@@ -2,7 +2,7 @@
 
 from datetime import datetime
 
-from sqlalchemy import DateTime, Index, Integer, String, Text, func
+from sqlalchemy import DateTime, ForeignKey, Index, Integer, String, Text, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.database import Base
@@ -12,6 +12,10 @@ class Log(Base):
     __tablename__ = "logs"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    # Owning project (null for logs created by the local demo / simulate flow).
+    project_id: Mapped[int | None] = mapped_column(
+        ForeignKey("projects.id"), nullable=True, index=True
+    )
     timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
     service_name: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
     severity: Mapped[str] = mapped_column(String(32), nullable=False, index=True)

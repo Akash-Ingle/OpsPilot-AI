@@ -11,7 +11,10 @@ import type {
   IncidentDetail,
   IncidentOut,
   IncidentStatus,
+  IngestResult,
   LogOut,
+  ProjectCreated,
+  ProjectOut,
   ScenarioInfo,
   Severity,
   SimulateResult,
@@ -201,6 +204,62 @@ export function triggerAnalysis(
   return request<AnalyzeResult>(`/analyze`, {
     method: "POST",
     body: JSON.stringify(params),
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Projects + ingestion (the "connect your app" loop)
+//
+// These are client-side calls authenticated with a per-project API key. The key
+// is held only in the browser (localStorage) — it never touches the Next server.
+// ---------------------------------------------------------------------------
+
+function authHeaders(apiKey: string): Record<string, string> {
+  return { Authorization: `Bearer ${apiKey}` };
+}
+
+export function createProject(name: string): Promise<ProjectCreated> {
+  return request<ProjectCreated>(`/projects`, {
+    method: "POST",
+    body: JSON.stringify({ name }),
+  });
+}
+
+export function getProject(apiKey: string): Promise<ProjectOut> {
+  return request<ProjectOut>(`/projects/me`, { headers: authHeaders(apiKey) });
+}
+
+export interface UpdateProjectParams {
+  slack_webhook_url?: string;
+  alerts_enabled?: boolean;
+}
+
+export function updateProject(
+  apiKey: string,
+  params: UpdateProjectParams,
+): Promise<ProjectOut> {
+  return request<ProjectOut>(`/projects/me`, {
+    method: "PATCH",
+    headers: authHeaders(apiKey),
+    body: JSON.stringify(params),
+  });
+}
+
+export interface IngestLogItem {
+  message: string;
+  service_name?: string;
+  severity?: string;
+  timestamp?: string;
+}
+
+export function ingestLogs(
+  apiKey: string,
+  logs: IngestLogItem[],
+): Promise<IngestResult> {
+  return request<IngestResult>(`/ingest`, {
+    method: "POST",
+    headers: authHeaders(apiKey),
+    body: JSON.stringify({ logs }),
   });
 }
 

@@ -44,12 +44,27 @@ class Settings(BaseSettings):
     rate_limit_enabled: bool = True
     rate_limit_analyze: str = "10/minute"
     rate_limit_simulate: str = "20/minute"
+    rate_limit_ingest: str = "120/minute"
+    rate_limit_project_create: str = "10/hour"
 
     # Public-demo safety net: when the live LLM call fails (e.g. the free-tier
     # daily quota is exhausted), fall back to a pre-computed analysis for the
     # matching built-in scenario instead of returning an error. Off by default
     # so local/dev surfaces real errors; enabled on the hosted demo.
     demo_cache_enabled: bool = False
+
+    # --- Ingestion + always-on watcher --------------------------------------
+    # Max log lines accepted in a single /ingest batch.
+    ingest_max_batch: int = 1000
+    # When logs arrive and anomalies are detected, automatically run the agent
+    # and open an incident (the "always-on" behavior). The cooldown throttles
+    # this per project so a log flood can't spam the LLM / burn free-tier quota.
+    auto_analyze_enabled: bool = True
+    auto_analyze_cooldown_seconds: int = 300
+    # How many recent logs the watcher feeds the agent per project.
+    auto_analyze_window: int = 300
+    # Public dashboard base URL, used to build incident links in Slack alerts.
+    frontend_base_url: str = ""
 
     # Stored as a raw string in the env so pydantic-settings doesn't try to
     # JSON-decode it. Consumers should read `settings.cors_origins` (the

@@ -4,7 +4,7 @@ import enum
 from datetime import datetime
 from typing import List, TYPE_CHECKING
 
-from sqlalchemy import DateTime, Enum, Integer, String, Text, func
+from sqlalchemy import DateTime, Enum, ForeignKey, Integer, String, Text, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
@@ -31,6 +31,10 @@ class Incident(Base):
     __tablename__ = "incidents"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    # Owning project (null for incidents from the local demo / simulate flow).
+    project_id: Mapped[int | None] = mapped_column(
+        ForeignKey("projects.id"), nullable=True, index=True
+    )
     detected_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         server_default=func.now(),

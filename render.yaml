@@ -48,6 +48,18 @@ services:
       # for the matching demo scenario instead of erroring, so the demo never breaks.
       - key: DEMO_CACHE_ENABLED
         value: "true"
+      # Always-on watcher: auto-open an incident when ingested logs look anomalous.
+      # The cooldown caps auto-analysis to once per project per window so a log
+      # flood can't burn the free-tier LLM quota.
+      - key: AUTO_ANALYZE_ENABLED
+        value: "true"
+      - key: AUTO_ANALYZE_COOLDOWN_SECONDS
+        value: "300"
+      # Used to build "View in OpsPilot" links in Slack alerts.
+      - key: FRONTEND_BASE_URL
+        value: https://opspilot-ai-frontend.onrender.com
+      - key: RATE_LIMIT_INGEST
+        value: 120/minute
 
   - type: web
     name: opspilot-ai-frontend

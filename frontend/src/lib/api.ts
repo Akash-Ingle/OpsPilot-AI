@@ -47,39 +47,76 @@ export class ApiError extends Error {
   }
 }
 
+// Free-tier hosts (e.g. Render) spin the backend down after inactivity; the
+// first request then returns a gateway error (or a connection failure) for
+// ~30-60s while it cold-starts. Retry idempotent reads with backoff so the page
+// waits out the wake-up instead of showing an error. POSTs are never retried —
+// re-sending /simulate or /analyze could double-write logs or double-spend the
+// LLM quota.
+const TRANSIENT_STATUSES = new Set([502, 503, 504]);
+const RETRY_DELAYS_MS = [3000, 5000, 8000, 10000, 12000, 15000];
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const url = `${API_URL}${path}`;
-  let res: Response;
-  try {
-    res = await fetch(url, {
-      // Never cache — incident state is volatile.
-      cache: "no-store",
-      headers: { "Content-Type": "application/json", ...(init?.headers ?? {}) },
-      ...init,
-    });
-  } catch (err) {
-    // Network-level error (backend down, CORS blocked, DNS, etc.)
-    throw new ApiError(
-      `Network error contacting backend at ${url}: ${(err as Error).message}`,
-      0,
-      url,
-      null,
-    );
+  const method = (init?.method ?? "GET").toUpperCase();
+  const canRetry = method === "GET";
+
+  let attempt = 0;
+  // eslint-disable-next-line no-constant-condition
+  while (true) {
+    let res: Response;
+    try {
+      res = await fetch(url, {
+        // Never cache — incident state is volatile.
+        cache: "no-store",
+        headers: { "Content-Type": "application/json", ...(init?.headers ?? {}) },
+        ...init,
+      });
+    } catch (err) {
+      // Network-level error (backend down/cold, CORS blocked, DNS, etc.)
+      if (canRetry && attempt < RETRY_DELAYS_MS.length) {
+        await sleep(RETRY_DELAYS_MS[attempt++]);
+        continue;
+      }
+      throw new ApiError(
+        `Network error contacting backend at ${url}: ${(err as Error).message}`,
+        0,
+        url,
+        null,
+      );
+    }
+
+    // Transient gateway error from a cold backend: back off and retry.
+    if (
+      !res.ok &&
+      canRetry &&
+      TRANSIENT_STATUSES.has(res.status) &&
+      attempt < RETRY_DELAYS_MS.length
+    ) {
+      await sleep(RETRY_DELAYS_MS[attempt++]);
+      continue;
+    }
+
+    const contentType = res.headers.get("content-type") ?? "";
+    const isJson = contentType.includes("application/json");
+    const payload = isJson
+      ? await res.json().catch(() => null)
+      : await res.text();
+
+    if (!res.ok) {
+      const detail =
+        (isJson && payload && typeof payload === "object" && "detail" in payload
+          ? String((payload as { detail: unknown }).detail)
+          : null) ?? `${res.status} ${res.statusText}`;
+      throw new ApiError(detail, res.status, url, payload);
+    }
+
+    return payload as T;
   }
-
-  const contentType = res.headers.get("content-type") ?? "";
-  const isJson = contentType.includes("application/json");
-  const payload = isJson ? await res.json().catch(() => null) : await res.text();
-
-  if (!res.ok) {
-    const detail =
-      (isJson && payload && typeof payload === "object" && "detail" in payload
-        ? String((payload as { detail: unknown }).detail)
-        : null) ?? `${res.status} ${res.statusText}`;
-    throw new ApiError(detail, res.status, url, payload);
-  }
-
-  return payload as T;
 }
 
 // ---------------------------------------------------------------------------

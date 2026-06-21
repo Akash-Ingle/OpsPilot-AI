@@ -124,9 +124,9 @@ function FetchErrorBox({ message }: { message: string }) {
       </h3>
       <p className="mt-1.5 text-sm text-red-200/80">{message}</p>
       <p className="mt-3 text-xs text-neutral-400">
-        Make sure the FastAPI backend is running and that{" "}
-        <code className="kbd">NEXT_PUBLIC_API_URL</code> points at it (default{" "}
-        <code className="kbd">http://localhost:8000/api/v1</code>).
+        The demo backend runs on a free tier that sleeps after inactivity and can
+        take ~30–60s to wake up. Give it a moment and refresh — it should load on
+        the next try.
       </p>
     </div>
   );

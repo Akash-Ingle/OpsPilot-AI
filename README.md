@@ -82,6 +82,16 @@ class OpsPilotHandler(logging.Handler):
 logging.getLogger().addHandler(OpsPilotHandler())
 ```
 
+**Try it without writing any code.** [`examples/sample_app.py`](./examples/sample_app.py) is a dependency-free log shipper that simulates an app. Create a project on the **Connect your app** page, grab the key, then:
+
+```bash
+# Fire one incident burst and watch an incident open automatically:
+python examples/sample_app.py --api-key opsp_... --scenario database_failure
+
+# Or stream healthy traffic with a periodic incident burst (good for a live demo):
+python examples/sample_app.py --api-key opsp_... --loop
+```
+
 ---
 
 ## Architecture

@@ -9,6 +9,7 @@ import {
   createProject,
   getProject,
   ingestLogs,
+  KEY_COOKIE,
   updateProject,
   type IngestLogItem,
 } from "@/lib/api";
@@ -16,6 +17,18 @@ import type { ProjectOut } from "@/lib/types";
 
 const KEY_STORAGE = "opspilot_api_key";
 const INGEST_URL = `${API_URL}/ingest`;
+
+// Mirror the key into a cookie so the server-rendered dashboard/detail pages can
+// read it and show this tenant's private incidents (not the public sandbox).
+function setKeyCookie(key: string) {
+  document.cookie = `${KEY_COOKIE}=${encodeURIComponent(key)}; path=/; max-age=${
+    60 * 60 * 24 * 365
+  }; SameSite=Lax`;
+}
+
+function clearKeyCookie() {
+  document.cookie = `${KEY_COOKIE}=; path=/; max-age=0; SameSite=Lax`;
+}
 
 // A canned burst that trips the anomaly detector so the demo loop is instant.
 const SAMPLE_LOGS: IngestLogItem[] = [
@@ -46,11 +59,13 @@ export default function ConnectPage() {
       return;
     }
     setApiKey(stored);
+    setKeyCookie(stored);
     getProject(stored)
       .then(setProject)
       .catch((err) => {
         if (err instanceof ApiError && err.status === 401) {
           localStorage.removeItem(KEY_STORAGE);
+          clearKeyCookie();
           setApiKey(null);
         }
       })
@@ -75,6 +90,7 @@ export default function ConnectPage() {
 
   function onCreated(key: string, proj: ProjectOut | null) {
     localStorage.setItem(KEY_STORAGE, key);
+    setKeyCookie(key);
     setApiKey(key);
     setProject(proj);
     setFreshKey(true);
@@ -82,6 +98,7 @@ export default function ConnectPage() {
 
   function forget() {
     localStorage.removeItem(KEY_STORAGE);
+    clearKeyCookie();
     setApiKey(null);
     setProject(null);
     setFreshKey(false);

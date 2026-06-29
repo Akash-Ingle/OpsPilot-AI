@@ -36,6 +36,11 @@ const API_URL =
     ? INTERNAL_API_URL
     : PUBLIC_API_URL;
 
+// Name of the cookie that mirrors the per-browser API key. The Connect page
+// writes it (alongside localStorage) so the server-rendered dashboard / detail
+// pages can read it via next/headers and forward it to the tenant-scoped API.
+export const KEY_COOKIE = "opspilot_key";
+
 export class ApiError extends Error {
   readonly status: number;
   readonly url: string;
@@ -162,19 +167,34 @@ export interface ListIncidentsParams {
   offset?: number;
 }
 
+// Read endpoints are tenant-scoped: with no key the backend returns only the
+// public sandbox (project_id NULL); with a valid key it returns that project's
+// rows. The dashboard/detail pages forward the per-browser key when present.
+function maybeAuth(apiKey?: string | null): Record<string, string> {
+  return apiKey ? { Authorization: `Bearer ${apiKey}` } : {};
+}
+
 export function listIncidents(
   params: ListIncidentsParams = {},
+  apiKey?: string | null,
 ): Promise<IncidentOut[]> {
   const qs = new URLSearchParams();
   if (params.status) qs.set("status", params.status);
   if (params.severity) qs.set("severity", params.severity);
   qs.set("limit", String(params.limit ?? 50));
   qs.set("offset", String(params.offset ?? 0));
-  return request<IncidentOut[]>(`/incidents?${qs.toString()}`);
+  return request<IncidentOut[]>(`/incidents?${qs.toString()}`, {
+    headers: maybeAuth(apiKey),
+  });
 }
 
-export function getIncident(id: number | string): Promise<IncidentDetail> {
-  return request<IncidentDetail>(`/incidents/${id}`);
+export function getIncident(
+  id: number | string,
+  apiKey?: string | null,
+): Promise<IncidentDetail> {
+  return request<IncidentDetail>(`/incidents/${id}`, {
+    headers: maybeAuth(apiKey),
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -188,13 +208,18 @@ export interface ListLogsParams {
   offset?: number;
 }
 
-export function listLogs(params: ListLogsParams = {}): Promise<LogOut[]> {
+export function listLogs(
+  params: ListLogsParams = {},
+  apiKey?: string | null,
+): Promise<LogOut[]> {
   const qs = new URLSearchParams();
   if (params.service_name) qs.set("service_name", params.service_name);
   if (params.severity) qs.set("severity", params.severity);
   qs.set("limit", String(params.limit ?? 100));
   qs.set("offset", String(params.offset ?? 0));
-  return request<LogOut[]>(`/logs?${qs.toString()}`);
+  return request<LogOut[]>(`/logs?${qs.toString()}`, {
+    headers: maybeAuth(apiKey),
+  });
 }
 
 // ---------------------------------------------------------------------------

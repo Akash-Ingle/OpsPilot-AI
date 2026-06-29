@@ -4,7 +4,7 @@ from typing import List, Optional
 
 from fastapi import APIRouter, File, HTTPException, Query, UploadFile, status
 
-from app.api.deps import DBSession
+from app.api.deps import DBSession, OptionalProject
 from app.models.log import Log
 from app.schemas.log import LogCreate, LogOut, LogUploadResponse
 from app.services.log_parser import parse_log_payload
@@ -51,12 +51,18 @@ async def upload_logs(
 )
 def list_logs(
     db: DBSession,
+    project: OptionalProject,
     service_name: Optional[str] = Query(None),
     severity: Optional[str] = Query(None),
     limit: int = Query(100, ge=1, le=1000),
     offset: int = Query(0, ge=0),
 ) -> List[LogOut]:
+    # No key -> public sandbox logs (project_id NULL); valid key -> that tenant's.
     query = db.query(Log)
+    if project is None:
+        query = query.filter(Log.project_id.is_(None))
+    else:
+        query = query.filter(Log.project_id == project.id)
     if service_name:
         query = query.filter(Log.service_name == service_name)
     if severity:

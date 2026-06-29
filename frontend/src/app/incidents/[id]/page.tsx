@@ -1,3 +1,4 @@
+import { cookies } from "next/headers";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 
@@ -11,7 +12,7 @@ import { Section } from "@/components/Section";
 import { SeverityBadge } from "@/components/SeverityBadge";
 import { StatusBadge } from "@/components/StatusBadge";
 import { ToolTimeline } from "@/components/ToolTimeline";
-import { ApiError, getIncident, listLogs } from "@/lib/api";
+import { ApiError, getIncident, KEY_COOKIE, listLogs } from "@/lib/api";
 import {
   formatAbsolute,
   formatConfidence,
@@ -29,9 +30,13 @@ export default async function IncidentDetailPage({
   const id = Number(params.id);
   if (!Number.isFinite(id) || id <= 0) notFound();
 
+  // Forward the per-browser key so private incidents resolve; public sandbox
+  // incidents resolve with or without it. A 404 means "not yours / not public".
+  const apiKey = cookies().get(KEY_COOKIE)?.value ?? null;
+
   let incident;
   try {
-    incident = await getIncident(id);
+    incident = await getIncident(id, apiKey);
   } catch (err) {
     if (err instanceof ApiError && err.status === 404) notFound();
     return <FetchError err={err} />;
@@ -46,7 +51,7 @@ export default async function IncidentDetailPage({
   // so we pull a wide window and rely on highlighting for focus.
   let recentLogs: Awaited<ReturnType<typeof listLogs>> = [];
   try {
-    recentLogs = await listLogs({ limit: 80 });
+    recentLogs = await listLogs({ limit: 80 }, apiKey);
   } catch {
     recentLogs = [];
   }

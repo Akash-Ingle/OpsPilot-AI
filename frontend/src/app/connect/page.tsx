@@ -318,10 +318,12 @@ function SampleLogs({
 }) {
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
+  const [isError, setIsError] = useState(false);
 
   async function send() {
     setBusy(true);
     setMsg(null);
+    setIsError(false);
     try {
       const res = await ingestLogs(apiKey, SAMPLE_LOGS);
       setMsg(
@@ -331,6 +333,7 @@ function SampleLogs({
       setTimeout(onSent, 2500);
       setTimeout(onSent, 6000);
     } catch (err) {
+      setIsError(true);
       setMsg(err instanceof Error ? err.message : "Failed to send sample logs");
     } finally {
       setBusy(false);
@@ -354,7 +357,15 @@ function SampleLogs({
       >
         {busy ? "Sending…" : "Send sample logs"}
       </button>
-      {msg && <p className="mt-3 text-sm text-emerald-300/90">{msg}</p>}
+      {msg && (
+        <p
+          className={`mt-3 text-sm ${
+            isError ? "text-red-300" : "text-emerald-300/90"
+          }`}
+        >
+          {msg}
+        </p>
+      )}
     </div>
   );
 }
@@ -417,16 +428,19 @@ function SlackSection({
   const [url, setUrl] = useState("");
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
+  const [isError, setIsError] = useState(false);
 
   async function save() {
     setBusy(true);
     setMsg(null);
+    setIsError(false);
     try {
       await updateProject(apiKey, { slack_webhook_url: url.trim() });
       setMsg("Saved. New incidents will be posted to your Slack channel.");
       setUrl("");
       onSaved();
     } catch (err) {
+      setIsError(true);
       setMsg(err instanceof Error ? err.message : "Failed to save webhook");
     } finally {
       setBusy(false);
@@ -473,7 +487,15 @@ function SlackSection({
           {busy ? "Saving…" : "Save webhook"}
         </button>
       </div>
-      {msg && <p className="mt-3 text-sm text-emerald-300/90">{msg}</p>}
+      {msg && (
+        <p
+          className={`mt-3 text-sm ${
+            isError ? "text-red-300" : "text-emerald-300/90"
+          }`}
+        >
+          {msg}
+        </p>
+      )}
     </div>
   );
 }

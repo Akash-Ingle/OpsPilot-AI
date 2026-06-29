@@ -63,6 +63,32 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+// FastAPI's error `detail` may be a string (HTTPException) or a list of objects
+// (422 validation errors). Render it to a readable string instead of letting an
+// object stringify to "[object Object]".
+function extractDetail(payload: unknown): string | null {
+  if (!payload || typeof payload !== "object" || !("detail" in payload)) {
+    return null;
+  }
+  const d = (payload as { detail: unknown }).detail;
+  if (typeof d === "string") return d;
+  if (Array.isArray(d)) {
+    return (
+      d
+        .map((e) =>
+          e && typeof e === "object" && "msg" in e
+            ? String((e as { msg: unknown }).msg)
+            : JSON.stringify(e),
+        )
+        .join("; ") || null
+    );
+  }
+  if (d && typeof d === "object" && "msg" in d) {
+    return String((d as { msg: unknown }).msg);
+  }
+  return d == null ? null : String(d);
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const url = `${API_URL}${path}`;
   const method = (init?.method ?? "GET").toUpperCase();
@@ -76,8 +102,12 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
       res = await fetch(url, {
         // Never cache — incident state is volatile.
         cache: "no-store",
-        headers: { "Content-Type": "application/json", ...(init?.headers ?? {}) },
         ...init,
+        // Headers must come AFTER ...init: spreading init last would clobber the
+        // merged headers and drop Content-Type for calls that pass an Authorization
+        // header (e.g. /ingest, PATCH /projects/me), causing the backend to reject
+        // the JSON body.
+        headers: { "Content-Type": "application/json", ...(init?.headers ?? {}) },
       });
     } catch (err) {
       // Network-level error (backend down/cold, CORS blocked, DNS, etc.)
@@ -112,9 +142,8 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 
     if (!res.ok) {
       const detail =
-        (isJson && payload && typeof payload === "object" && "detail" in payload
-          ? String((payload as { detail: unknown }).detail)
-          : null) ?? `${res.status} ${res.statusText}`;
+        (isJson ? extractDetail(payload) : null) ??
+        `${res.status} ${res.statusText}`;
       throw new ApiError(detail, res.status, url, payload);
     }
 

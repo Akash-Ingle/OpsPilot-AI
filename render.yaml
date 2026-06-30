@@ -8,6 +8,15 @@
 # If Render assigns different URLs (names taken), update the two cross-service
 # URLs below (CORS_ORIGINS on the backend, NEXT_PUBLIC_API_URL on the frontend).
 
+# Managed Postgres so users/projects/incidents persist across deploys (the free
+# SQLite disk is ephemeral). Render's free Postgres expires after ~30 days; for a
+# permanent demo, upgrade the instance.
+databases:
+  - name: opspilot-ai-db
+    plan: free
+    databaseName: opspilot
+    user: opspilot
+
 services:
   - type: web
     name: opspilot-ai-backend
@@ -26,6 +35,14 @@ services:
         value: production
       - key: DEBUG
         value: "false"
+      # Mark the session cookie Secure in production (served over HTTPS).
+      - key: SESSION_COOKIE_SECURE
+        value: "true"
+      # Persistent Postgres connection string, injected from the managed DB above.
+      - key: DATABASE_URL
+        fromDatabase:
+          name: opspilot-ai-db
+          property: connectionString
       - key: LLM_PROVIDER
         value: gemini
       # gemini-2.5-flash-lite is the cheapest model with an active free tier.
@@ -81,3 +98,8 @@ services:
       # real URL.
       - key: NEXT_PUBLIC_API_URL
         value: https://opspilot-ai-backend-ka0z.onrender.com/api/v1
+      # Scheme+host of the backend (no /api/v1). Feeds next.config.js rewrites so
+      # the browser hits the frontend's own origin (/api/v1/*) and the session
+      # cookie stays first-party. Must be present at build time (see Dockerfile).
+      - key: BACKEND_ORIGIN
+        value: https://opspilot-ai-backend-ka0z.onrender.com

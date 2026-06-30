@@ -15,6 +15,7 @@ from app.main import app
 from app.models.incident import Incident
 from app.models.log import Log
 from app.services import watcher as watcher_module
+from tests._auth import login
 
 API = settings.api_v1_prefix
 
@@ -48,7 +49,10 @@ def client(monkeypatch):
         lambda logs, anomalies, max_iterations=4: build_cached_run("database_failure"),
     )
     try:
-        yield TestClient(app), TestingSession
+        tc = TestClient(app)
+        # Projects are now owned by a user, so creating one requires a session.
+        login(tc)
+        yield tc, TestingSession
     finally:
         app.dependency_overrides.pop(get_db, None)
         Base.metadata.drop_all(bind=engine)

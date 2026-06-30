@@ -7,16 +7,30 @@ from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 
 from app.config import settings
 
+# Managed Postgres providers (e.g. Render, Heroku) hand out URLs with the legacy
+# `postgres://` scheme, which SQLAlchemy 2.0 no longer recognizes. Normalize it.
+_db_url = settings.database_url
+if _db_url.startswith("postgres://"):
+    _db_url = _db_url.replace("postgres://", "postgresql+psycopg2://", 1)
+elif _db_url.startswith("postgresql://"):
+    _db_url = _db_url.replace("postgresql://", "postgresql+psycopg2://", 1)
+
 # SQLite needs a special connect arg when used with multiple threads (e.g. FastAPI).
 _connect_args = {}
-if settings.database_url.startswith("sqlite"):
+_engine_kwargs = {}
+if _db_url.startswith("sqlite"):
     _connect_args["check_same_thread"] = False
+else:
+    # Recycle connections so a Postgres server that drops idle conns doesn't
+    # surface stale-connection errors on the next request.
+    _engine_kwargs["pool_pre_ping"] = True
 
 engine = create_engine(
-    settings.database_url,
+    _db_url,
     echo=False,
     future=True,
     connect_args=_connect_args,
+    **_engine_kwargs,
 )
 
 SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False, future=True)
@@ -58,6 +72,7 @@ def _ensure_columns() -> None:
     wanted = {
         "logs": [("project_id", "INTEGER")],
         "incidents": [("project_id", "INTEGER")],
+        "projects": [("user_id", "INTEGER")],
     }
     with engine.begin() as conn:
         for table, columns in wanted.items():

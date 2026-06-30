@@ -5,6 +5,11 @@
  * the wire format (JSON), not the ORM, so enums are plain strings.
  */
 
+export interface User {
+  id: number;
+  email: string;
+}
+
 export type Severity = "low" | "medium" | "high" | "critical";
 
 export type IncidentStatus =

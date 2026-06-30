@@ -39,6 +39,11 @@ class Settings(BaseSettings):
 
     vector_db_path: str = "./.chroma"
 
+    # Session cookie hardening. Secure must be on in production (HTTPS); kept off
+    # by default so http://localhost dev and the test client work.
+    session_cookie_secure: bool = False
+    session_cookie_samesite: str = "lax"
+
     # Per-IP rate limiting (protects the paid LLM endpoints on a public demo).
     # Limits use slowapi syntax, e.g. "10/minute" or "100/hour;1000/day".
     rate_limit_enabled: bool = True
@@ -46,6 +51,8 @@ class Settings(BaseSettings):
     rate_limit_simulate: str = "20/minute"
     rate_limit_ingest: str = "120/minute"
     rate_limit_project_create: str = "10/hour"
+    # Throttle credential endpoints to blunt brute-force / signup abuse.
+    rate_limit_auth: str = "10/minute"
 
     # Public-demo safety net: when the live LLM call fails (e.g. the free-tier
     # daily quota is exhausted), fall back to a pre-computed analysis for the

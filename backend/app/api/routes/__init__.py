@@ -4,6 +4,7 @@ from fastapi import APIRouter
 
 from app.api.routes import (
     analyze,
+    auth,
     evaluate,
     incidents,
     ingest,
@@ -13,6 +14,7 @@ from app.api.routes import (
 )
 
 api_router = APIRouter()
+api_router.include_router(auth.router, prefix="/auth", tags=["auth"])
 api_router.include_router(logs.router, prefix="/logs", tags=["logs"])
 api_router.include_router(incidents.router, prefix="/incidents", tags=["incidents"])
 api_router.include_router(analyze.router, prefix="/analyze", tags=["analyze"])

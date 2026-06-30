@@ -5,13 +5,14 @@ from typing import List, Literal, Optional
 from fastapi import APIRouter, HTTPException, Request, Response, status
 from pydantic import BaseModel, Field
 
-from app.api.deps import DBSession
+from app.api.deps import OptionalUser, DBSession
 from app.config import settings
 from app.core.logging import logger
 from app.core.rate_limit import limiter
 from app.models.log import Log
 from app.schemas.log import LogOut
 from app.services.log_generator import SCENARIO_META, generate_scenario
+from app.services.projects import get_or_create_default_project
 
 router = APIRouter()
 
@@ -74,7 +75,11 @@ def list_available_scenarios() -> List[ScenarioInfo]:
 )
 @limiter.limit(settings.rate_limit_simulate)
 def run_simulation(
-    request: Request, response: Response, payload: SimulateRequest, db: DBSession
+    request: Request,
+    response: Response,
+    payload: SimulateRequest,
+    user: OptionalUser,
+    db: DBSession,
 ) -> SimulateResponse:
     try:
         generated = generate_scenario(
@@ -114,7 +119,9 @@ def run_simulation(
         )
 
     try:
-        rows = [Log(**entry.model_dump()) for entry in generated]
+        # Logged in -> your project; anonymous -> the public sandbox.
+        project_id = get_or_create_default_project(db, user).id if user else None
+        rows = [Log(project_id=project_id, **entry.model_dump()) for entry in generated]
         db.add_all(rows)
         db.commit()
         for row in rows[:5]:

@@ -33,7 +33,7 @@ OpsPilot-AI is built for the on-call workflow. When a service degrades, an engin
 - **Structured, validated output** — a strict JSON contract (issue, root cause, fix, severity, confidence, ordered reasoning steps, cited log lines) enforced by Pydantic.
 - **Incident memory** — diagnosed incidents are embedded into a vector store (ChromaDB) so future analyses retrieve similar past incidents as grounding context.
 - **Self-evaluation** — an offline harness grades predictions against known ground truth and reports accuracy + **confidence calibration**.
-- **Dashboard** — a Next.js + TypeScript UI showing the incident list, the agent's chain of thought, the tool-usage timeline, and a confidence sparkline — plus a **one-click "Simulate incident"** flow that generates logs and runs the agent live from the browser.
+- **Dashboard** — a Next.js + TypeScript UI showing the incident list, the agent's chain of thought, the tool-usage timeline, and a confidence sparkline — plus a **one-click "Simulate incident"** flow that generates logs and runs the agent live from the browser. Anyone can try the **public sandbox**; signing in gives a **private space** for your own apps.
 
 ---
 
@@ -54,7 +54,8 @@ flowchart LR
 
 **Design notes that make it production-shaped:**
 
-- **Multi-tenant by API key.** Each project gets an `opsp_…` key; only its **SHA-256 hash** is stored (the raw key is shown once). Ingested logs and incidents are scoped to the project.
+- **Public sandbox + private accounts.** Anonymous visitors share a public sandbox (so they can try the agent with zero friction). Signing up (email/password, hashed with **bcrypt**) gives a private space: the dashboard authenticates via a server-side session in an **httpOnly, Secure cookie** kept first-party through a same-origin Next.js proxy — so the token is never readable by page JavaScript (XSS-resistant). Reads are scoped to the signed-in user's projects.
+- **API keys for machines.** Each project also gets an `opsp_…` ingestion key; only its **SHA-256 hash** is stored (raw key shown once). Logs and incidents are scoped to the project, and cross-tenant access returns 404 (never leaks existence).
 - **Event-driven, not a cron.** The watcher runs as a background task triggered by ingestion, so it works even on a free-tier host that sleeps between requests.
 - **Cost guardrail.** A per-project **cooldown** caps auto-analysis to once per window, so a log flood can't spam the LLM or burn a free-tier quota. The cached-analysis fallback covers exhausted quota.
 - **Alerting that never breaks the path.** Slack delivery is best-effort and isolated — a webhook failure is logged, never propagated to ingestion.
@@ -297,6 +298,10 @@ The repo ships a [`render.yaml`](./render.yaml) Blueprint that deploys both
 services (backend + frontend) as Docker web services on Render's free tier.
 
 It's configured for a **safe public demo**:
+- **Public sandbox + accounts on managed Postgres.** Visitors can try the public
+  sandbox instantly; signing up (email/password, bcrypt-hashed) gives a private
+  session (httpOnly cookie) and projects/incidents that persist in a managed
+  Postgres instance across deploys.
 - **Google Gemini free tier** (`LLM_PROVIDER=gemini`, `gemini-2.5-flash-lite`),
   so the demo costs **$0** instead of spending a paid API budget.
 - **Per-IP rate limiting** on the expensive endpoints (`/analyze`, `/simulate`)
@@ -328,23 +333,30 @@ Notes:
 
 Base prefix: `/api/v1`
 
-| Method | Path                  | Description                                            |
-| ------ | --------------------- | ------------------------------------------------------ |
-| POST   | `/projects`           | Create a project, issue an API key (returned once)     |
-| GET    | `/projects/me`        | Current project + ingest/incident stats (API key)      |
-| PATCH  | `/projects/me`        | Set the Slack webhook / toggle alerts (API key)        |
-| POST   | `/ingest`             | Ship a batch of logs; triggers the watcher (API key)   |
-| POST   | `/logs/upload`        | Upload logs (text or JSON)                             |
-| GET    | `/logs`               | List / filter ingested logs                            |
-| GET    | `/incidents`          | List incidents                                         |
-| POST   | `/incidents`          | Create an incident manually                            |
-| GET    | `/incidents/{id}`     | Incident detail + full analysis trace                  |
-| PATCH  | `/incidents/{id}`     | Update an incident                                     |
-| POST   | `/simulate`           | Generate a synthetic incident scenario                 |
-| GET    | `/simulate/scenarios` | List available simulation scenarios                    |
-| POST   | `/analyze`            | Run the multi-step agent over recent logs              |
-| POST   | `/evaluate`           | Grade an incident's analysis against ground truth      |
-| GET    | `/evaluate/summary`   | Aggregate accuracy + confidence-calibration metrics    |
+Auth: `session` = login cookie (human), `key` = project API key (machine),
+`optional` = works anonymously against the public sandbox, or scoped to you when
+signed in / keyed.
+
+| Method | Path                  | Auth     | Description                                           |
+| ------ | --------------------- | -------- | ----------------------------------------------------- |
+| POST   | `/auth/register`      | —        | Create an account and start a session                 |
+| POST   | `/auth/login`         | —        | Log in and start a session                            |
+| POST   | `/auth/logout`        | session  | End the session                                       |
+| GET    | `/auth/me`            | session  | Current user                                          |
+| POST   | `/projects`           | session  | Create a project, issue an API key (returned once)    |
+| GET    | `/projects`           | session  | List your projects + ingest/incident stats            |
+| PATCH  | `/projects/{id}`      | session  | Set the Slack webhook / toggle alerts                 |
+| GET    | `/projects/me`        | key      | Current project stats (by API key)                    |
+| POST   | `/ingest`             | key      | Ship a batch of logs; triggers the watcher            |
+| GET    | `/logs`               | optional | List / filter logs (scoped to caller)                 |
+| GET    | `/incidents`          | optional | List incidents (scoped to caller)                     |
+| GET    | `/incidents/{id}`     | optional | Incident detail + full analysis trace                 |
+| PATCH  | `/incidents/{id}`     | optional | Update an incident                                    |
+| POST   | `/simulate`           | optional | Generate a synthetic incident scenario                |
+| GET    | `/simulate/scenarios` | —        | List available simulation scenarios                   |
+| POST   | `/analyze`            | optional | Run the multi-step agent over recent logs             |
+| POST   | `/evaluate`           | —        | Grade an incident's analysis against ground truth     |
+| GET    | `/evaluate/summary`   | —        | Aggregate accuracy + confidence-calibration metrics   |
 
 ---
 

@@ -7,11 +7,15 @@ are scoped to a project.
 """
 
 from datetime import datetime
+from typing import TYPE_CHECKING
 
-from sqlalchemy import Boolean, DateTime, Integer, String, Text, func
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Text, func
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
+
+if TYPE_CHECKING:
+    from app.models.user import User
 
 
 class Project(Base):
@@ -19,6 +23,11 @@ class Project(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     name: Mapped[str] = mapped_column(String(120), nullable=False)
+    # Owning user (null for legacy/anonymous projects created before accounts).
+    user_id: Mapped[int | None] = mapped_column(
+        ForeignKey("users.id"), nullable=True, index=True
+    )
+    owner: Mapped["User | None"] = relationship(back_populates="projects")
 
     # SHA-256 hex of the raw API key. The raw key is never stored.
     key_hash: Mapped[str] = mapped_column(String(64), nullable=False, unique=True, index=True)

@@ -2,6 +2,8 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import "./globals.css";
 
+import { AuthNav } from "@/components/AuthNav";
+
 export const metadata: Metadata = {
   title: "OpsPilot-AI",
   description:
@@ -59,33 +61,7 @@ function TopBar() {
           </span>
         </Link>
 
-        <nav className="flex items-center gap-1 text-sm text-neutral-400">
-          <Link
-            href="/"
-            className="rounded-md px-3 py-1.5 font-medium text-neutral-200 transition-colors hover:bg-white/5"
-          >
-            Incidents
-          </Link>
-          <Link
-            href="/connect"
-            className="rounded-md px-3 py-1.5 font-medium text-neutral-200 transition-colors hover:bg-white/5"
-          >
-            Connect your app
-          </Link>
-          <a
-            href={
-              (
-                process.env.NEXT_PUBLIC_API_URL?.replace(/\/$/, "") ||
-                "http://localhost:8000/api/v1"
-              ).replace(/\/api\/v1$/, "") + "/docs"
-            }
-            target="_blank"
-            rel="noreferrer"
-            className="rounded-md px-3 py-1.5 font-medium transition-colors hover:bg-white/5 hover:text-neutral-200"
-          >
-            API docs ↗
-          </a>
-        </nav>
+        <AuthNav />
       </div>
     </header>
   );

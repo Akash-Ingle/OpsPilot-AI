@@ -1,4 +1,3 @@
-import { cookies } from "next/headers";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 
@@ -12,7 +11,8 @@ import { Section } from "@/components/Section";
 import { SeverityBadge } from "@/components/SeverityBadge";
 import { StatusBadge } from "@/components/StatusBadge";
 import { ToolTimeline } from "@/components/ToolTimeline";
-import { ApiError, getIncident, KEY_COOKIE, listLogs } from "@/lib/api";
+import { ApiError, getIncident, listLogs } from "@/lib/api";
+import { sessionCookie } from "@/lib/auth-server";
 import {
   formatAbsolute,
   formatConfidence,
@@ -30,13 +30,14 @@ export default async function IncidentDetailPage({
   const id = Number(params.id);
   if (!Number.isFinite(id) || id <= 0) notFound();
 
-  // Forward the per-browser key so private incidents resolve; public sandbox
-  // incidents resolve with or without it. A 404 means "not yours / not public".
-  const apiKey = cookies().get(KEY_COOKIE)?.value ?? null;
+  // Anonymous visitors can view public-sandbox incidents; signed-in users see
+  // their own. The cookie (present only when logged in) scopes the result. A 404
+  // means "not yours / doesn't exist" — existence isn't leaked across tenants.
+  const cookie = sessionCookie();
 
   let incident;
   try {
-    incident = await getIncident(id, apiKey);
+    incident = await getIncident(id, cookie);
   } catch (err) {
     if (err instanceof ApiError && err.status === 404) notFound();
     return <FetchError err={err} />;
@@ -51,7 +52,7 @@ export default async function IncidentDetailPage({
   // so we pull a wide window and rely on highlighting for focus.
   let recentLogs: Awaited<ReturnType<typeof listLogs>> = [];
   try {
-    recentLogs = await listLogs({ limit: 80 }, apiKey);
+    recentLogs = await listLogs({ limit: 80 }, cookie);
   } catch {
     recentLogs = [];
   }

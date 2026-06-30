@@ -4,10 +4,11 @@ from typing import List, Optional
 
 from fastapi import APIRouter, File, HTTPException, Query, UploadFile, status
 
-from app.api.deps import DBSession, OptionalProject
+from app.api.deps import AccessibleProjectIds, OptionalUser, DBSession
 from app.models.log import Log
 from app.schemas.log import LogCreate, LogOut, LogUploadResponse
 from app.services.log_parser import parse_log_payload
+from app.services.projects import get_or_create_default_project
 
 router = APIRouter()
 
@@ -16,10 +17,11 @@ router = APIRouter()
     "/upload",
     response_model=LogUploadResponse,
     status_code=status.HTTP_201_CREATED,
-    summary="Upload logs (raw text or JSON) for ingestion",
+    summary="Upload logs (raw text or JSON). Logged in -> your project; else sandbox.",
 )
 async def upload_logs(
     db: DBSession,
+    user: OptionalUser,
     file: UploadFile = File(..., description="Log file: plain text or JSON array"),
 ) -> LogUploadResponse:
     try:
@@ -32,7 +34,9 @@ async def upload_logs(
     if not parsed:
         raise HTTPException(status_code=400, detail="No valid log entries parsed from file")
 
-    rows = [Log(**entry.model_dump()) for entry in parsed]
+    # Logged in -> your project; anonymous -> the public sandbox (project_id NULL).
+    project_id = get_or_create_default_project(db, user).id if user else None
+    rows = [Log(project_id=project_id, **entry.model_dump()) for entry in parsed]
     db.add_all(rows)
     db.commit()
     for row in rows:
@@ -47,22 +51,21 @@ async def upload_logs(
 @router.get(
     "",
     response_model=List[LogOut],
-    summary="List ingested logs (filterable)",
+    summary="List ingested logs (filterable, scoped to the caller)",
 )
 def list_logs(
     db: DBSession,
-    project: OptionalProject,
+    project_ids: AccessibleProjectIds,
     service_name: Optional[str] = Query(None),
     severity: Optional[str] = Query(None),
     limit: int = Query(100, ge=1, le=1000),
     offset: int = Query(0, ge=0),
 ) -> List[LogOut]:
-    # No key -> public sandbox logs (project_id NULL); valid key -> that tenant's.
     query = db.query(Log)
-    if project is None:
-        query = query.filter(Log.project_id.is_(None))
+    if project_ids is None:
+        query = query.filter(Log.project_id.is_(None))  # anonymous sandbox
     else:
-        query = query.filter(Log.project_id == project.id)
+        query = query.filter(Log.project_id.in_(project_ids or [-1]))
     if service_name:
         query = query.filter(Log.service_name == service_name)
     if severity:

@@ -1,9 +1,9 @@
-"""Tenant isolation tests for the public-sandbox + private-project read model.
+"""Tenant isolation tests for the hybrid (public sandbox + private accounts) model.
 
-No key  -> caller sees only public sandbox rows (project_id IS NULL).
-Valid key -> caller sees only that project's rows.
-Cross-tenant or anonymous access to a private incident -> 404 (not 403, so the
-existence of another tenant's incident isn't leaked).
+  * anonymous -> the public sandbox only (project_id IS NULL)
+  * logged-in user (session cookie) -> incidents across their own projects
+  * API key -> that project only
+Cross-tenant / private access returns 404 (not 403) so existence isn't leaked.
 """
 
 from datetime import datetime, timezone
@@ -19,12 +19,13 @@ from app.database import Base, get_db
 from app.main import app
 from app.models.incident import Incident, Severity
 from app.models.log import Log
+from tests._auth import create_project, login
 
 API = settings.api_v1_prefix
 
 
 @pytest.fixture
-def client():
+def session_factory():
     engine = create_engine(
         "sqlite:///:memory:",
         connect_args={"check_same_thread": False},
@@ -43,24 +44,24 @@ def client():
 
     app.dependency_overrides[get_db] = _override_get_db
     try:
-        yield TestClient(app), TestingSession
+        yield TestingSession
     finally:
         app.dependency_overrides.pop(get_db, None)
         Base.metadata.drop_all(bind=engine)
 
 
-def _new_project(tc, name):
-    res = tc.post(f"{API}/projects", json={"name": name})
-    assert res.status_code == 201, res.text
-    body = res.json()
-    return body["api_key"], body["id"]
-
-
 @pytest.fixture
-def seeded(client):
-    tc, session_factory = client
-    key_a, id_a = _new_project(tc, "tenant-a")
-    key_b, id_b = _new_project(tc, "tenant-b")
+def seeded(session_factory):
+    # Two distinct users, each owning one project (separate cookie jars).
+    user_a = TestClient(app)
+    login(user_a, "a@example.com")
+    proj_a = create_project(user_a, "tenant-a")
+
+    user_b = TestClient(app)
+    login(user_b, "b@example.com")
+    proj_b = create_project(user_b, "tenant-b")
+
+    id_a, id_b = proj_a["id"], proj_b["id"]
 
     db = session_factory()
     try:
@@ -82,76 +83,89 @@ def seeded(client):
         db.close()
 
     return {
-        "tc": tc,
-        "key_a": key_a,
-        "key_b": key_b,
+        "user_a": user_a,
+        "user_b": user_b,
+        "anon": TestClient(app),
+        "key_a": proj_a["api_key"],
         "ids": ids,
-        "auth_a": {"Authorization": f"Bearer {key_a}"},
-        "auth_b": {"Authorization": f"Bearer {key_b}"},
+        "auth_a": {"Authorization": f"Bearer {proj_a['api_key']}"},
     }
 
 
-def test_anonymous_list_sees_only_public(seeded):
-    res = seeded["tc"].get(f"{API}/incidents")
+def test_anonymous_sees_only_public_sandbox(seeded):
+    res = seeded["anon"].get(f"{API}/incidents")
     assert res.status_code == 200
-    titles = {i["title"] for i in res.json()}
-    assert titles == {"public-sandbox"}
+    assert {i["title"] for i in res.json()} == {"public-sandbox"}
 
 
-def test_keyed_list_sees_only_own(seeded):
-    res = seeded["tc"].get(f"{API}/incidents", headers=seeded["auth_a"])
+def test_anonymous_can_read_public_but_not_private(seeded):
+    anon = seeded["anon"]
+    assert anon.get(f"{API}/incidents/{seeded['ids']['public']}").status_code == 200
+    assert anon.get(f"{API}/incidents/{seeded['ids']['a']}").status_code == 404
+
+
+def test_session_list_sees_only_own(seeded):
+    res = seeded["user_a"].get(f"{API}/incidents")
     assert res.status_code == 200
-    titles = {i["title"] for i in res.json()}
-    assert titles == {"a-incident"}
+    assert {i["title"] for i in res.json()} == {"a-incident"}
+
+    res_b = seeded["user_b"].get(f"{API}/incidents")
+    assert {i["title"] for i in res_b.json()} == {"b-incident"}
 
 
-def test_public_incident_readable_by_anyone(seeded):
-    res = seeded["tc"].get(f"{API}/incidents/{seeded['ids']['public']}")
+def test_api_key_list_sees_only_own(seeded):
+    # A sessionless client (machine) authenticating with project A's key sees
+    # only project A's incidents.
+    res = seeded["anon"].get(f"{API}/incidents", headers=seeded["auth_a"])
     assert res.status_code == 200
-
-
-def test_private_incident_hidden_from_anonymous(seeded):
-    res = seeded["tc"].get(f"{API}/incidents/{seeded['ids']['a']}")
-    assert res.status_code == 404
-
-
-def test_cross_tenant_detail_is_404(seeded):
-    # Tenant A must not be able to read tenant B's incident.
-    res = seeded["tc"].get(
-        f"{API}/incidents/{seeded['ids']['b']}", headers=seeded["auth_a"]
-    )
-    assert res.status_code == 404
+    assert {i["title"] for i in res.json()} == {"a-incident"}
 
 
 def test_owner_can_read_own_incident(seeded):
-    res = seeded["tc"].get(
-        f"{API}/incidents/{seeded['ids']['a']}", headers=seeded["auth_a"]
-    )
+    res = seeded["user_a"].get(f"{API}/incidents/{seeded['ids']['a']}")
     assert res.status_code == 200
     assert res.json()["title"] == "a-incident"
 
 
+def test_cross_tenant_detail_is_404(seeded):
+    res = seeded["user_a"].get(f"{API}/incidents/{seeded['ids']['b']}")
+    assert res.status_code == 404
+
+
 def test_cross_tenant_patch_is_404(seeded):
-    res = seeded["tc"].patch(
-        f"{API}/incidents/{seeded['ids']['b']}",
-        headers=seeded["auth_a"],
-        json={"status": "resolved"},
+    res = seeded["user_a"].patch(
+        f"{API}/incidents/{seeded['ids']['b']}", json={"status": "resolved"}
     )
     assert res.status_code == 404
 
 
 def test_invalid_key_is_rejected(seeded):
-    res = seeded["tc"].get(
+    res = seeded["anon"].get(
         f"{API}/incidents", headers={"Authorization": "Bearer opsp_not_a_real_key"}
     )
     assert res.status_code == 401
 
 
 def test_logs_are_scoped_too(seeded):
-    anon = seeded["tc"].get(f"{API}/logs")
+    res = seeded["user_a"].get(f"{API}/logs")
+    assert res.status_code == 200
+    assert {l["message"] for l in res.json()} == {"a log"}
+
+    anon = seeded["anon"].get(f"{API}/logs")
     assert anon.status_code == 200
     assert {l["message"] for l in anon.json()} == {"public log"}
 
-    keyed = seeded["tc"].get(f"{API}/logs", headers=seeded["auth_a"])
-    assert keyed.status_code == 200
-    assert {l["message"] for l in keyed.json()} == {"a log"}
+
+def test_user_sees_incidents_across_their_projects(seeded, session_factory):
+    # A second project for user A; its incident should also appear for that user.
+    proj_a2 = create_project(seeded["user_a"], "tenant-a-second")
+    db = session_factory()
+    try:
+        db.add(Incident(title="a2-incident", severity=Severity.LOW, project_id=proj_a2["id"]))
+        db.commit()
+    finally:
+        db.close()
+
+    res = seeded["user_a"].get(f"{API}/incidents")
+    assert res.status_code == 200
+    assert {i["title"] for i in res.json()} == {"a-incident", "a2-incident"}

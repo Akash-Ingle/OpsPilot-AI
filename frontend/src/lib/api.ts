@@ -1,9 +1,13 @@
 /**
  * Thin fetch wrapper around the OpsPilot-AI backend.
  *
- * Usage is identical in server components and route handlers: just await the
- * helpers below. All fetches disable Next's cache so the dashboard reflects
- * new incidents as soon as the backend persists them.
+ * Auth model:
+ *  - The BROWSER calls a SAME-ORIGIN proxy (`/api/v1/*`, see next.config.js).
+ *    The backend's httpOnly session cookie is therefore first-party and rides
+ *    along automatically on every browser request.
+ *  - SERVER components call the backend directly (absolute URL) and must forward
+ *    the incoming session cookie explicitly (read via next/headers and passed in
+ *    as `cookie`), since there's no browser to attach it.
  */
 
 import type {
@@ -18,28 +22,26 @@ import type {
   ScenarioInfo,
   Severity,
   SimulateResult,
+  User,
 } from "./types";
 
-// Base URL used by the browser (inlined into the client bundle at build time).
-const PUBLIC_API_URL =
+// Absolute backend URL for EXTERNAL clients (shown in the Connect snippets and
+// the API-docs link). Not used for in-app browser fetches.
+export const PUBLIC_BACKEND_URL =
   process.env.NEXT_PUBLIC_API_URL?.replace(/\/$/, "") ||
   "http://localhost:8000/api/v1";
 
-// In containerized setups the Next server and the browser reach the backend at
-// different hostnames (e.g. `http://backend:8000` inside the Docker network vs.
-// `http://localhost:8000` from the user's browser). When `INTERNAL_API_URL` is
-// set, server-side requests use it; the browser always uses the public URL.
-const INTERNAL_API_URL = process.env.INTERNAL_API_URL?.replace(/\/$/, "");
+// Server-side base: the Next server reaches the backend directly. Prefer an
+// internal URL (Docker network) when provided, else the public URL.
+const SERVER_BASE =
+  process.env.INTERNAL_API_URL?.replace(/\/$/, "") || PUBLIC_BACKEND_URL;
 
-const API_URL =
-  typeof window === "undefined" && INTERNAL_API_URL
-    ? INTERNAL_API_URL
-    : PUBLIC_API_URL;
+// Browser-side base: relative, so requests are same-origin and get proxied to
+// the backend by Next (keeping the session cookie first-party).
+const BROWSER_BASE = "/api/v1";
 
-// Name of the cookie that mirrors the per-browser API key. The Connect page
-// writes it (alongside localStorage) so the server-rendered dashboard / detail
-// pages can read it via next/headers and forward it to the tenant-scoped API.
-export const KEY_COOKIE = "opspilot_key";
+const isServer = typeof window === "undefined";
+const API_URL = isServer ? SERVER_BASE : BROWSER_BASE;
 
 export class ApiError extends Error {
   readonly status: number;
@@ -56,11 +58,8 @@ export class ApiError extends Error {
 }
 
 // Free-tier hosts (e.g. Render) spin the backend down after inactivity; the
-// first request then returns a gateway error (or a connection failure) for
-// ~30-60s while it cold-starts. Retry idempotent reads with backoff so the page
-// waits out the wake-up instead of showing an error. POSTs are never retried —
-// re-sending /simulate or /analyze could double-write logs or double-spend the
-// LLM quota.
+// first request then returns a gateway error for ~30-60s while it cold-starts.
+// Retry idempotent reads with backoff. POSTs are never retried.
 const TRANSIENT_STATUSES = new Set([502, 503, 504]);
 const RETRY_DELAYS_MS = [3000, 5000, 8000, 10000, 12000, 15000];
 
@@ -69,8 +68,7 @@ function sleep(ms: number): Promise<void> {
 }
 
 // FastAPI's error `detail` may be a string (HTTPException) or a list of objects
-// (422 validation errors). Render it to a readable string instead of letting an
-// object stringify to "[object Object]".
+// (422 validation errors). Render it to a readable string.
 function extractDetail(payload: unknown): string | null {
   if (!payload || typeof payload !== "object" || !("detail" in payload)) {
     return null;
@@ -94,10 +92,27 @@ function extractDetail(payload: unknown): string | null {
   return d == null ? null : String(d);
 }
 
-async function request<T>(path: string, init?: RequestInit): Promise<T> {
+interface RequestOpts {
+  // Server-only: forward this Cookie header to the backend so the session is
+  // recognized during SSR. Ignored in the browser (cookies are automatic).
+  cookie?: string | null;
+}
+
+async function request<T>(
+  path: string,
+  init?: RequestInit,
+  opts?: RequestOpts,
+): Promise<T> {
   const url = `${API_URL}${path}`;
   const method = (init?.method ?? "GET").toUpperCase();
   const canRetry = method === "GET";
+
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+    ...((init?.headers as Record<string, string>) ?? {}),
+  };
+  // Server-only: forward the session cookie (no browser to attach it).
+  if (isServer && opts?.cookie) headers.Cookie = opts.cookie;
 
   let attempt = 0;
   // eslint-disable-next-line no-constant-condition
@@ -105,17 +120,14 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     let res: Response;
     try {
       res = await fetch(url, {
-        // Never cache — incident state is volatile.
         cache: "no-store",
+        // Send cookies on same-origin browser requests (the session lives here).
+        credentials: "include",
         ...init,
-        // Headers must come AFTER ...init: spreading init last would clobber the
-        // merged headers and drop Content-Type for calls that pass an Authorization
-        // header (e.g. /ingest, PATCH /projects/me), causing the backend to reject
-        // the JSON body.
-        headers: { "Content-Type": "application/json", ...(init?.headers ?? {}) },
+        // Headers come AFTER ...init so Content-Type / Cookie aren't clobbered.
+        headers,
       });
     } catch (err) {
-      // Network-level error (backend down/cold, CORS blocked, DNS, etc.)
       if (canRetry && attempt < RETRY_DELAYS_MS.length) {
         await sleep(RETRY_DELAYS_MS[attempt++]);
         continue;
@@ -128,7 +140,6 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
       );
     }
 
-    // Transient gateway error from a cold backend: back off and retry.
     if (
       !res.ok &&
       canRetry &&
@@ -152,12 +163,38 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
       throw new ApiError(detail, res.status, url, payload);
     }
 
-    return payload as T;
+    return (payload === "" ? (undefined as T) : (payload as T));
   }
 }
 
 // ---------------------------------------------------------------------------
-// Incidents
+// Auth (human accounts; session via httpOnly cookie)
+// ---------------------------------------------------------------------------
+
+export function register(email: string, password: string): Promise<User> {
+  return request<User>(`/auth/register`, {
+    method: "POST",
+    body: JSON.stringify({ email, password }),
+  });
+}
+
+export function login(email: string, password: string): Promise<User> {
+  return request<User>(`/auth/login`, {
+    method: "POST",
+    body: JSON.stringify({ email, password }),
+  });
+}
+
+export function logout(): Promise<void> {
+  return request<void>(`/auth/logout`, { method: "POST" });
+}
+
+export function getMe(cookie?: string | null): Promise<User> {
+  return request<User>(`/auth/me`, undefined, { cookie });
+}
+
+// ---------------------------------------------------------------------------
+// Incidents (reads scoped to the caller's projects; SSR forwards the cookie)
 // ---------------------------------------------------------------------------
 
 export interface ListIncidentsParams {
@@ -167,34 +204,25 @@ export interface ListIncidentsParams {
   offset?: number;
 }
 
-// Read endpoints are tenant-scoped: with no key the backend returns only the
-// public sandbox (project_id NULL); with a valid key it returns that project's
-// rows. The dashboard/detail pages forward the per-browser key when present.
-function maybeAuth(apiKey?: string | null): Record<string, string> {
-  return apiKey ? { Authorization: `Bearer ${apiKey}` } : {};
-}
-
 export function listIncidents(
   params: ListIncidentsParams = {},
-  apiKey?: string | null,
+  cookie?: string | null,
 ): Promise<IncidentOut[]> {
   const qs = new URLSearchParams();
   if (params.status) qs.set("status", params.status);
   if (params.severity) qs.set("severity", params.severity);
   qs.set("limit", String(params.limit ?? 50));
   qs.set("offset", String(params.offset ?? 0));
-  return request<IncidentOut[]>(`/incidents?${qs.toString()}`, {
-    headers: maybeAuth(apiKey),
+  return request<IncidentOut[]>(`/incidents?${qs.toString()}`, undefined, {
+    cookie,
   });
 }
 
 export function getIncident(
   id: number | string,
-  apiKey?: string | null,
+  cookie?: string | null,
 ): Promise<IncidentDetail> {
-  return request<IncidentDetail>(`/incidents/${id}`, {
-    headers: maybeAuth(apiKey),
-  });
+  return request<IncidentDetail>(`/incidents/${id}`, undefined, { cookie });
 }
 
 // ---------------------------------------------------------------------------
@@ -210,20 +238,18 @@ export interface ListLogsParams {
 
 export function listLogs(
   params: ListLogsParams = {},
-  apiKey?: string | null,
+  cookie?: string | null,
 ): Promise<LogOut[]> {
   const qs = new URLSearchParams();
   if (params.service_name) qs.set("service_name", params.service_name);
   if (params.severity) qs.set("severity", params.severity);
   qs.set("limit", String(params.limit ?? 100));
   qs.set("offset", String(params.offset ?? 0));
-  return request<LogOut[]>(`/logs?${qs.toString()}`, {
-    headers: maybeAuth(apiKey),
-  });
+  return request<LogOut[]>(`/logs?${qs.toString()}`, undefined, { cookie });
 }
 
 // ---------------------------------------------------------------------------
-// Simulation + analysis (write actions, used by the in-browser demo flow)
+// Simulation + analysis (browser write actions; session cookie is automatic)
 // ---------------------------------------------------------------------------
 
 export function listScenarios(): Promise<ScenarioInfo[]> {
@@ -262,14 +288,11 @@ export function triggerAnalysis(
 }
 
 // ---------------------------------------------------------------------------
-// Projects + ingestion (the "connect your app" loop)
-//
-// These are client-side calls authenticated with a per-project API key. The key
-// is held only in the browser (localStorage) — it never touches the Next server.
+// Projects (owned by the logged-in user; authenticated via the session cookie)
 // ---------------------------------------------------------------------------
 
-function authHeaders(apiKey: string): Record<string, string> {
-  return { Authorization: `Bearer ${apiKey}` };
+export function listProjects(cookie?: string | null): Promise<ProjectOut[]> {
+  return request<ProjectOut[]>(`/projects`, undefined, { cookie });
 }
 
 export function createProject(name: string): Promise<ProjectCreated> {
@@ -279,25 +302,26 @@ export function createProject(name: string): Promise<ProjectCreated> {
   });
 }
 
-export function getProject(apiKey: string): Promise<ProjectOut> {
-  return request<ProjectOut>(`/projects/me`, { headers: authHeaders(apiKey) });
-}
-
 export interface UpdateProjectParams {
   slack_webhook_url?: string;
   alerts_enabled?: boolean;
 }
 
-export function updateProject(
-  apiKey: string,
+export function updateProjectById(
+  id: number,
   params: UpdateProjectParams,
 ): Promise<ProjectOut> {
-  return request<ProjectOut>(`/projects/me`, {
+  return request<ProjectOut>(`/projects/${id}`, {
     method: "PATCH",
-    headers: authHeaders(apiKey),
     body: JSON.stringify(params),
   });
 }
+
+// ---------------------------------------------------------------------------
+// Ingestion — authenticated with the per-project API KEY (machine credential).
+// Used by the "send sample logs" demo button; real apps call the backend URL
+// directly from their own code.
+// ---------------------------------------------------------------------------
 
 export interface IngestLogItem {
   message: string;
@@ -312,7 +336,7 @@ export function ingestLogs(
 ): Promise<IngestResult> {
   return request<IngestResult>(`/ingest`, {
     method: "POST",
-    headers: authHeaders(apiKey),
+    headers: { Authorization: `Bearer ${apiKey}` },
     body: JSON.stringify({ logs }),
   });
 }

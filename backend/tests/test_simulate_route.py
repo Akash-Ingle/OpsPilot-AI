@@ -10,6 +10,7 @@ from app.config import settings
 from app.database import Base, get_db
 from app.main import app
 from app.models.log import Log
+from tests._auth import create_project, login
 
 
 @pytest.fixture
@@ -32,7 +33,10 @@ def client():
 
     app.dependency_overrides[get_db] = _override_get_db
     try:
-        yield TestClient(app), TestingSession
+        tc = TestClient(app)
+        login(tc)
+        create_project(tc, name="Simulate Test")
+        yield tc, TestingSession
     finally:
         app.dependency_overrides.pop(get_db, None)
         Base.metadata.drop_all(bind=engine)

@@ -1,34 +1,21 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import {
-  API_URL,
   ApiError,
   createProject,
-  getProject,
   ingestLogs,
-  KEY_COOKIE,
-  updateProject,
+  listProjects,
+  PUBLIC_BACKEND_URL,
+  updateProjectById,
   type IngestLogItem,
 } from "@/lib/api";
-import type { ProjectOut } from "@/lib/types";
+import type { ProjectCreated, ProjectOut } from "@/lib/types";
 
-const KEY_STORAGE = "opspilot_api_key";
-const INGEST_URL = `${API_URL}/ingest`;
-
-// Mirror the key into a cookie so the server-rendered dashboard/detail pages can
-// read it and show this tenant's private incidents (not the public sandbox).
-function setKeyCookie(key: string) {
-  document.cookie = `${KEY_COOKIE}=${encodeURIComponent(key)}; path=/; max-age=${
-    60 * 60 * 24 * 365
-  }; SameSite=Lax`;
-}
-
-function clearKeyCookie() {
-  document.cookie = `${KEY_COOKIE}=; path=/; max-age=0; SameSite=Lax`;
-}
+const INGEST_URL = `${PUBLIC_BACKEND_URL}/ingest`;
 
 // A canned burst that trips the anomaly detector so the demo loop is instant.
 const SAMPLE_LOGS: IngestLogItem[] = [
@@ -45,64 +32,39 @@ const SAMPLE_LOGS: IngestLogItem[] = [
 ];
 
 export default function ConnectPage() {
-  const [apiKey, setApiKey] = useState<string | null>(null);
-  const [project, setProject] = useState<ProjectOut | null>(null);
+  const router = useRouter();
+  const [projects, setProjects] = useState<ProjectOut[] | null>(null);
   const [loading, setLoading] = useState(true);
-  const [freshKey, setFreshKey] = useState(false); // just created → show the banner
+  const [freshKey, setFreshKey] = useState<ProjectCreated | null>(null);
 
-  // Load any stored key on mount and resolve the project.
-  useEffect(() => {
-    const stored =
-      typeof window !== "undefined" ? localStorage.getItem(KEY_STORAGE) : null;
-    if (!stored) {
-      setLoading(false);
-      return;
+  const refresh = useCallback(async () => {
+    try {
+      setProjects(await listProjects());
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 401) {
+        router.push("/login?next=/connect");
+        return;
+      }
+      // transient — keep last known state
     }
-    setApiKey(stored);
-    setKeyCookie(stored);
-    getProject(stored)
-      .then(setProject)
+  }, [router]);
+
+  useEffect(() => {
+    listProjects()
+      .then(setProjects)
       .catch((err) => {
         if (err instanceof ApiError && err.status === 401) {
-          localStorage.removeItem(KEY_STORAGE);
-          clearKeyCookie();
-          setApiKey(null);
+          router.push("/login?next=/connect");
         }
       })
       .finally(() => setLoading(false));
-  }, []);
+  }, [router]);
 
-  const refresh = useCallback(async () => {
-    if (!apiKey) return;
-    try {
-      setProject(await getProject(apiKey));
-    } catch {
-      /* transient — keep last known state */
-    }
-  }, [apiKey]);
-
-  // Poll live status while connected.
+  // Poll live stats while on the page.
   useEffect(() => {
-    if (!apiKey) return;
-    const id = setInterval(refresh, 4000);
+    const id = setInterval(refresh, 5000);
     return () => clearInterval(id);
-  }, [apiKey, refresh]);
-
-  function onCreated(key: string, proj: ProjectOut | null) {
-    localStorage.setItem(KEY_STORAGE, key);
-    setKeyCookie(key);
-    setApiKey(key);
-    setProject(proj);
-    setFreshKey(true);
-  }
-
-  function forget() {
-    localStorage.removeItem(KEY_STORAGE);
-    clearKeyCookie();
-    setApiKey(null);
-    setProject(null);
-    setFreshKey(false);
-  }
+  }, [refresh]);
 
   return (
     <div className="space-y-8">
@@ -117,23 +79,36 @@ export default function ConnectPage() {
           Stream your app&apos;s logs to OpsPilot with one HTTP call. It watches the
           stream, and the moment something looks wrong it pulls the relevant lines,
           diagnoses the root cause, opens an incident, and pings you in Slack —
-          before you go digging. No copy-pasting into a chat box.
+          before you go digging.
         </p>
       </header>
 
+      {freshKey && (
+        <FreshKeyCard created={freshKey} onDismiss={() => setFreshKey(null)} />
+      )}
+
+      <CreateProject
+        onCreated={(created) => {
+          setFreshKey(created);
+          refresh();
+        }}
+      />
+
       {loading ? (
         <div className="card p-6 text-sm text-neutral-400">Loading…</div>
-      ) : !apiKey ? (
-        <CreateProject onCreated={onCreated} />
+      ) : projects && projects.length > 0 ? (
+        <div className="space-y-4">
+          <h2 className="text-sm font-semibold text-neutral-200">
+            Your projects
+          </h2>
+          {projects.map((p) => (
+            <ProjectCard key={p.id} project={p} onSaved={refresh} />
+          ))}
+        </div>
       ) : (
-        <Connected
-          apiKey={apiKey}
-          project={project}
-          freshKey={freshKey}
-          dismissFreshKey={() => setFreshKey(false)}
-          onForget={forget}
-          onRefresh={refresh}
-        />
+        <p className="text-sm text-neutral-500">
+          No projects yet. Create one above to get an API key.
+        </p>
       )}
     </div>
   );
@@ -142,7 +117,7 @@ export default function ConnectPage() {
 function CreateProject({
   onCreated,
 }: {
-  onCreated: (key: string, project: ProjectOut | null) => void;
+  onCreated: (created: ProjectCreated) => void;
 }) {
   const [name, setName] = useState("");
   const [busy, setBusy] = useState(false);
@@ -155,13 +130,8 @@ function CreateProject({
     setError(null);
     try {
       const created = await createProject(name.trim());
-      let project: ProjectOut | null = null;
-      try {
-        project = await getProject(created.api_key);
-      } catch {
-        /* stats will populate on next poll */
-      }
-      onCreated(created.api_key, project);
+      onCreated(created);
+      setName("");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to create project");
     } finally {
@@ -199,118 +169,91 @@ function CreateProject({
   );
 }
 
-function Connected({
-  apiKey,
-  project,
-  freshKey,
-  dismissFreshKey,
-  onForget,
-  onRefresh,
+function FreshKeyCard({
+  created,
+  onDismiss,
 }: {
-  apiKey: string;
-  project: ProjectOut | null;
-  freshKey: boolean;
-  dismissFreshKey: () => void;
-  onForget: () => void;
-  onRefresh: () => void;
+  created: ProjectCreated;
+  onDismiss: () => void;
 }) {
   return (
-    <div className="space-y-6">
-      {freshKey && (
-        <div className="card border-amber-500/30 bg-amber-500/[0.05] p-5">
-          <h3 className="text-sm font-semibold text-amber-200">
-            Save your API key now
-          </h3>
-          <p className="mt-1 text-sm text-amber-100/80">
-            This is the only time the full key is shown by the server. It&apos;s
-            stored in this browser so you can keep using this page, but copy it
-            into your app&apos;s secrets too.
-          </p>
-          <div className="mt-3 flex items-center gap-2">
-            <code className="flex-1 truncate rounded-md border border-white/10 bg-black/30 px-3 py-2 font-mono text-xs text-neutral-200">
-              {apiKey}
-            </code>
-            <CopyButton value={apiKey} label="Copy key" />
-            <button
-              onClick={dismissFreshKey}
-              className="rounded-md border border-white/10 px-3 py-2 text-xs text-neutral-300 hover:bg-white/5"
-            >
-              Got it
-            </button>
-          </div>
+    <div className="card space-y-5 border-amber-500/30 bg-amber-500/[0.05] p-6">
+      <div>
+        <h3 className="text-sm font-semibold text-amber-200">
+          Save the API key for “{created.name}” now
+        </h3>
+        <p className="mt-1 text-sm text-amber-100/80">
+          This is the only time the full key is shown. Copy it into your app&apos;s
+          secrets — it won&apos;t be displayed again.
+        </p>
+        <div className="mt-3 flex items-center gap-2">
+          <code className="flex-1 truncate rounded-md border border-white/10 bg-black/30 px-3 py-2 font-mono text-xs text-neutral-200">
+            {created.api_key}
+          </code>
+          <CopyButton value={created.api_key} label="Copy key" />
+          <button
+            onClick={onDismiss}
+            className="rounded-md border border-white/10 px-3 py-2 text-xs text-neutral-300 hover:bg-white/5"
+          >
+            Got it
+          </button>
         </div>
-      )}
+      </div>
 
-      <StatusPanel project={project} apiKey={apiKey} onForget={onForget} />
-      <SampleLogs apiKey={apiKey} onSent={onRefresh} />
-      <SnippetSection apiKey={apiKey} />
-      <SlackSection apiKey={apiKey} project={project} onSaved={onRefresh} />
+      <SnippetSection apiKey={created.api_key} />
+      <SampleLogs apiKey={created.api_key} />
     </div>
   );
 }
 
-function StatusPanel({
+function ProjectCard({
   project,
-  apiKey,
-  onForget,
+  onSaved,
 }: {
-  project: ProjectOut | null;
-  apiKey: string;
-  onForget: () => void;
+  project: ProjectOut;
+  onSaved: () => void;
 }) {
-  const waiting = !project || project.log_count === 0;
+  const waiting = project.log_count === 0;
   return (
     <div className="card p-6">
-      <div className="flex flex-wrap items-start justify-between gap-4">
-        <div>
-          <div className="flex items-center gap-2">
-            <span
-              className={`h-2.5 w-2.5 rounded-full ${
-                waiting ? "bg-neutral-500" : "bg-emerald-400 animate-pulse"
-              }`}
-            />
-            <h2 className="text-sm font-semibold text-neutral-100">
-              {project?.name ?? "Your project"}
-            </h2>
-            <span className="rounded-full border border-white/10 bg-white/[0.03] px-2 py-0.5 font-mono text-[10px] text-neutral-400">
-              {project?.key_prefix ?? apiKey.slice(0, 12)}…
-            </span>
-          </div>
-          <p className="mt-1 text-sm text-neutral-400">
-            {waiting
-              ? "Waiting for your first logs… send a batch below or wire up the snippet."
-              : "Live — OpsPilot is watching this stream."}
-          </p>
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="flex items-center gap-2">
+          <span
+            className={`h-2.5 w-2.5 rounded-full ${
+              waiting ? "bg-neutral-500" : "bg-emerald-400 animate-pulse"
+            }`}
+          />
+          <h3 className="text-sm font-semibold text-neutral-100">
+            {project.name}
+          </h3>
+          <span className="rounded-full border border-white/10 bg-white/[0.03] px-2 py-0.5 font-mono text-[10px] text-neutral-400">
+            {project.key_prefix}…
+          </span>
         </div>
-        <button
-          onClick={onForget}
-          className="rounded-md border border-white/10 px-3 py-1.5 text-xs text-neutral-400 hover:bg-white/5"
-        >
-          Forget key on this device
-        </button>
+        {project.incident_count > 0 && (
+          <Link
+            href="/"
+            className="text-sm font-medium text-sky-400 hover:text-sky-300"
+          >
+            View incidents →
+          </Link>
+        )}
       </div>
 
       <div className="mt-5 grid grid-cols-2 gap-3 sm:grid-cols-3">
-        <Stat label="Logs ingested" value={project?.log_count ?? 0} />
-        <Stat label="Incidents opened" value={project?.incident_count ?? 0} />
+        <Stat label="Logs ingested" value={project.log_count} />
+        <Stat label="Incidents opened" value={project.incident_count} />
         <Stat
           label="Last auto-analysis"
           value={
-            project?.last_auto_analysis_at
+            project.last_auto_analysis_at
               ? new Date(project.last_auto_analysis_at).toLocaleTimeString()
               : "—"
           }
         />
       </div>
 
-      {(project?.incident_count ?? 0) > 0 && (
-        <Link
-          href="/"
-          className="mt-4 inline-block text-sm font-medium text-sky-400 hover:text-sky-300"
-        >
-          View incidents on the dashboard →
-        </Link>
-      )}
+      <SlackSection project={project} onSaved={onSaved} />
     </div>
   );
 }
@@ -326,13 +269,7 @@ function Stat({ label, value }: { label: string; value: string | number }) {
   );
 }
 
-function SampleLogs({
-  apiKey,
-  onSent,
-}: {
-  apiKey: string;
-  onSent: () => void;
-}) {
+function SampleLogs({ apiKey }: { apiKey: string }) {
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
   const [isError, setIsError] = useState(false);
@@ -344,11 +281,8 @@ function SampleLogs({
     try {
       const res = await ingestLogs(apiKey, SAMPLE_LOGS);
       setMsg(
-        `Sent ${res.ingested} logs. The watcher is analyzing them — an incident should appear within a few seconds.`,
+        `Sent ${res.ingested} logs. The watcher is analyzing them — an incident should appear on your dashboard within a few seconds.`,
       );
-      // Give the background watcher a moment, then refresh stats a couple times.
-      setTimeout(onSent, 2500);
-      setTimeout(onSent, 6000);
     } catch (err) {
       setIsError(true);
       setMsg(err instanceof Error ? err.message : "Failed to send sample logs");
@@ -358,28 +292,23 @@ function SampleLogs({
   }
 
   return (
-    <div className="card p-6">
-      <h2 className="text-sm font-semibold text-neutral-100">
+    <div className="rounded-lg border border-white/10 bg-white/[0.02] p-4">
+      <h4 className="text-sm font-semibold text-neutral-100">
         See it work right now
-      </h2>
+      </h4>
       <p className="mt-1 max-w-2xl text-sm text-neutral-400">
-        Don&apos;t have logs handy? Send a sample burst of database-failure logs.
-        OpsPilot will detect the anomaly, diagnose it, and open an incident
-        automatically — exactly what it does for your real traffic.
+        Send a sample burst of database-failure logs. OpsPilot will detect the
+        anomaly, diagnose it, and open an incident automatically.
       </p>
       <button
         onClick={send}
         disabled={busy}
-        className="mt-4 rounded-lg border border-white/10 bg-white/[0.04] px-4 py-2 text-sm font-semibold text-neutral-100 transition-colors hover:bg-white/[0.08] disabled:opacity-50"
+        className="mt-3 rounded-lg border border-white/10 bg-white/[0.04] px-4 py-2 text-sm font-semibold text-neutral-100 transition-colors hover:bg-white/[0.08] disabled:opacity-50"
       >
         {busy ? "Sending…" : "Send sample logs"}
       </button>
       {msg && (
-        <p
-          className={`mt-3 text-sm ${
-            isError ? "text-red-300" : "text-emerald-300/90"
-          }`}
-        >
+        <p className={`mt-3 text-sm ${isError ? "text-red-300" : "text-emerald-300/90"}`}>
           {msg}
         </p>
       )}
@@ -395,10 +324,10 @@ function SnippetSection({ apiKey }: { apiKey: string }) {
   const snippet = buildSnippet(tab, INGEST_URL, apiKey);
 
   return (
-    <div className="card p-6">
-      <h2 className="text-sm font-semibold text-neutral-100">
+    <div className="rounded-lg border border-white/10 bg-white/[0.02] p-4">
+      <h4 className="text-sm font-semibold text-neutral-100">
         Wire it into your app
-      </h2>
+      </h4>
       <p className="mt-1 text-sm text-neutral-400">
         Ship logs to <code className="text-neutral-300">{INGEST_URL}</code> with
         your key in the <code className="text-neutral-300">Authorization</code>{" "}
@@ -434,12 +363,10 @@ function SnippetSection({ apiKey }: { apiKey: string }) {
 }
 
 function SlackSection({
-  apiKey,
   project,
   onSaved,
 }: {
-  apiKey: string;
-  project: ProjectOut | null;
+  project: ProjectOut;
   onSaved: () => void;
 }) {
   const [url, setUrl] = useState("");
@@ -452,7 +379,7 @@ function SlackSection({
     setMsg(null);
     setIsError(false);
     try {
-      await updateProject(apiKey, { slack_webhook_url: url.trim() });
+      await updateProjectById(project.id, { slack_webhook_url: url.trim() });
       setMsg("Saved. New incidents will be posted to your Slack channel.");
       setUrl("");
       onSaved();
@@ -465,12 +392,12 @@ function SlackSection({
   }
 
   return (
-    <div className="card p-6">
+    <div className="mt-5 rounded-lg border border-white/10 bg-white/[0.02] p-4">
       <div className="flex items-center justify-between">
-        <h2 className="text-sm font-semibold text-neutral-100">
+        <h4 className="text-sm font-semibold text-neutral-100">
           Get alerts in Slack
-        </h2>
-        {project?.slack_configured && (
+        </h4>
+        {project.slack_configured && (
           <span className="rounded-full border border-emerald-500/30 bg-emerald-500/10 px-2.5 py-0.5 text-[11px] font-medium text-emerald-300">
             Connected
           </span>
@@ -486,8 +413,8 @@ function SlackSection({
         >
           incoming webhook URL
         </a>
-        . When OpsPilot opens an incident, it posts the severity, root cause, fix,
-        and a link — right where your team already is.
+        . OpsPilot posts the severity, root cause, fix, and a link when it opens an
+        incident.
       </p>
       <div className="mt-4 flex flex-col gap-2 sm:flex-row">
         <input
@@ -505,11 +432,7 @@ function SlackSection({
         </button>
       </div>
       {msg && (
-        <p
-          className={`mt-3 text-sm ${
-            isError ? "text-red-300" : "text-emerald-300/90"
-          }`}
-        >
+        <p className={`mt-3 text-sm ${isError ? "text-red-300" : "text-emerald-300/90"}`}>
           {msg}
         </p>
       )}

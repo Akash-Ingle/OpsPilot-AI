@@ -18,6 +18,10 @@ COPY . .
 # browser-facing API URL must be known here.
 ARG NEXT_PUBLIC_API_URL=http://localhost:8000/api/v1
 ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL
+# BACKEND_ORIGIN feeds next.config.js rewrites() (the same-origin /api proxy).
+# rewrites are baked into the routes manifest at build time, so it's needed here.
+ARG BACKEND_ORIGIN=http://localhost:8000
+ENV BACKEND_ORIGIN=$BACKEND_ORIGIN
 ENV NEXT_TELEMETRY_DISABLED=1
 
 RUN npm run build

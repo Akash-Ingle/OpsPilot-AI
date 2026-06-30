@@ -15,12 +15,14 @@ from app.config import settings
 from app.database import Base, get_db
 from app.main import app
 from app.models.log import Log
+from app.models.project import Project
 from app.schemas.analysis import (
     AgentObservability,
     IterationRecord,
     LLMStructuredOutput,
     ToolCallRecord,
 )
+from tests._auth import create_project, login
 
 VALID_OUTPUT = LLMStructuredOutput(
     issue="DB connection pool exhausted",
@@ -115,18 +117,33 @@ def client(monkeypatch, tmp_path):
 
     app.dependency_overrides[get_db] = _override_get_db
     try:
-        yield TestClient(app), TestingSession
+        tc = TestClient(app)
+        # Authenticate and create the user's (default) project so analyze/simulate
+        # have somewhere to attach incidents and seeded logs are in scope.
+        login(tc)
+        create_project(tc, name="Analyze Test")
+        yield tc, TestingSession
     finally:
         app.dependency_overrides.pop(get_db, None)
         Base.metadata.drop_all(bind=engine)
 
 
+def _default_project_id(session_factory) -> int:
+    db = session_factory()
+    try:
+        return db.query(Project.id).order_by(Project.id.asc()).first()[0]
+    finally:
+        db.close()
+
+
 def _seed_logs(session_factory, count: int = 10, service: str = "api-gateway") -> None:
+    project_id = _default_project_id(session_factory)
     db = session_factory()
     base = datetime(2026, 4, 23, 14, 0, tzinfo=timezone.utc)
     for i in range(count):
         db.add(
             Log(
+                project_id=project_id,
                 timestamp=base + timedelta(seconds=i * 10),
                 service_name=service,
                 severity="error" if i < count - 1 else "info",
@@ -340,6 +357,7 @@ def test_analyze_generic_llm_error_returns_502(client, monkeypatch):
 
 def _seed_db_failure_logs(session_factory) -> None:
     """Seed logs that clearly match the database_failure scenario markers."""
+    project_id = _default_project_id(session_factory)
     db = session_factory()
     base = datetime(2026, 4, 23, 14, 0, tzinfo=timezone.utc)
     messages = [
@@ -350,6 +368,7 @@ def _seed_db_failure_logs(session_factory) -> None:
     for i, msg in enumerate(messages * 2):
         db.add(
             Log(
+                project_id=project_id,
                 timestamp=base + timedelta(seconds=i * 5),
                 service_name="orders-svc",
                 severity="error",

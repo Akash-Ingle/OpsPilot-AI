@@ -8,7 +8,7 @@ from fastapi import APIRouter, HTTPException, Request, Response, status
 from app.agent.demo_cache import cached_run_for_logs
 from app.agent.llm_client import LLMError, LLMTimeoutError, LLMValidationError
 from app.agent.orchestrator import run_agent_loop
-from app.api.deps import DBSession
+from app.api.deps import OptionalUser, DBSession
 from app.config import settings
 from app.core.logging import logger
 from app.core.rate_limit import limiter
@@ -18,6 +18,7 @@ from app.models.log import Log
 from app.schemas.analysis import AnalyzeRequest, AnalyzeResponse
 from app.services import memory_service
 from app.services.anomaly_detector import detect_anomalies
+from app.services.projects import get_or_create_default_project
 
 router = APIRouter()
 
@@ -30,14 +31,28 @@ router = APIRouter()
 )
 @limiter.limit(settings.rate_limit_analyze)
 def trigger_analysis(
-    request: Request, response: Response, payload: AnalyzeRequest, db: DBSession
+    request: Request,
+    response: Response,
+    payload: AnalyzeRequest,
+    user: OptionalUser,
+    db: DBSession,
 ) -> AnalyzeResponse:
     """Analyze the most recent logs, detect anomalies, run the multi-step agent
     loop (with tool dispatch), persist an incident + analysis, and return the
     structured result together with end-to-end observability.
+
+    Logged in -> scoped to the user's default project (private). Anonymous ->
+    the public sandbox (``project_id IS NULL``), so the demo works without login.
     """
-    # 1. Fetch recent logs from DB.
+    project_id = get_or_create_default_project(db, user).id if user else None
+
+    # 1. Fetch recent logs from DB (scoped to the caller).
     query = db.query(Log)
+    query = (
+        query.filter(Log.project_id == project_id)
+        if project_id is not None
+        else query.filter(Log.project_id.is_(None))
+    )
     if payload.service_name:
         query = query.filter(Log.service_name == payload.service_name)
     logs: List[Log] = (
@@ -110,6 +125,7 @@ def trigger_analysis(
     # 4-5. Persist incident + analysis atomically.
     try:
         incident = Incident(
+            project_id=project_id,
             title=(result.issue or "Unclassified incident")[:255],
             severity=result.severity,
             root_cause=result.root_cause,

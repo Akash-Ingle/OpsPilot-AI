@@ -37,9 +37,10 @@ jobs:
 
       - name: Ping frontend
         run: |
+          # /login renders 200 without auth (the dashboard redirects to it).
           code=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 120 \
-            --retry 3 --retry-all-errors --retry-delay 15 "$FRONTEND_URL/")
-          echo "frontend / -> $code"
+            --retry 3 --retry-all-errors --retry-delay 15 "$FRONTEND_URL/login")
+          echo "frontend /login -> $code"
           # Don't fail the job on a transient frontend blip; the backend ping is
           # what matters for the cold-start experience.
           test "$code" = "200" || echo "::warning::frontend returned $code"

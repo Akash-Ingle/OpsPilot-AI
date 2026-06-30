@@ -7,12 +7,12 @@ Onboarding flow for "connect your app":
 """
 
 from datetime import datetime
-from typing import Optional
+from typing import List, Optional
 
-from fastapi import APIRouter, Request, Response, status
+from fastapi import APIRouter, HTTPException, Request, Response, status
 from pydantic import BaseModel, Field
 
-from app.api.deps import CurrentProject, DBSession
+from app.api.deps import CurrentProject, CurrentUser, DBSession
 from app.config import settings
 from app.core.logging import logger
 from app.core.rate_limit import limiter
@@ -78,24 +78,49 @@ def _to_out(db, project: Project) -> ProjectOut:
 )
 @limiter.limit(settings.rate_limit_project_create)
 def create_project(
-    request: Request, response: Response, payload: ProjectCreateRequest, db: DBSession
+    request: Request,
+    response: Response,
+    payload: ProjectCreateRequest,
+    user: CurrentUser,
+    db: DBSession,
 ) -> ProjectCreatedResponse:
     key = generate_key()
     project = Project(
         name=payload.name.strip(),
         key_hash=key.key_hash,
         key_prefix=key.display_prefix,
+        user_id=user.id,
     )
     db.add(project)
     db.commit()
     db.refresh(project)
-    logger.info("projects: created project id={} name={!r}", project.id, project.name)
+    logger.info(
+        "projects: user id={} created project id={} name={!r}",
+        user.id,
+        project.id,
+        project.name,
+    )
     return ProjectCreatedResponse(
         id=project.id,
         name=project.name,
         api_key=key.raw,
         key_prefix=project.key_prefix,
     )
+
+
+@router.get(
+    "",
+    response_model=List[ProjectOut],
+    summary="List the logged-in user's projects with stats",
+)
+def list_projects(user: CurrentUser, db: DBSession) -> List[ProjectOut]:
+    projects = (
+        db.query(Project)
+        .filter(Project.user_id == user.id)
+        .order_by(Project.id.asc())
+        .all()
+    )
+    return [_to_out(db, p) for p in projects]
 
 
 @router.get(
@@ -107,14 +132,7 @@ def get_current_project(project: CurrentProject, db: DBSession) -> ProjectOut:
     return _to_out(db, project)
 
 
-@router.patch(
-    "/me",
-    response_model=ProjectOut,
-    summary="Update the current project's alerting settings",
-)
-def update_current_project(
-    project: CurrentProject, payload: ProjectUpdateRequest, db: DBSession
-) -> ProjectOut:
+def _apply_update(db, project: Project, payload: "ProjectUpdateRequest") -> ProjectOut:
     if payload.slack_webhook_url is not None:
         url = payload.slack_webhook_url.strip()
         project.slack_webhook_url = url or None
@@ -129,3 +147,32 @@ def update_current_project(
         project.alerts_enabled,
     )
     return _to_out(db, project)
+
+
+@router.patch(
+    "/me",
+    response_model=ProjectOut,
+    summary="Update the current project's alerting settings (by API key)",
+)
+def update_current_project(
+    project: CurrentProject, payload: ProjectUpdateRequest, db: DBSession
+) -> ProjectOut:
+    return _apply_update(db, project, payload)
+
+
+@router.patch(
+    "/{project_id}",
+    response_model=ProjectOut,
+    summary="Update one of the logged-in user's projects",
+)
+def update_project(
+    project_id: int, payload: ProjectUpdateRequest, user: CurrentUser, db: DBSession
+) -> ProjectOut:
+    project = (
+        db.query(Project)
+        .filter(Project.id == project_id, Project.user_id == user.id)
+        .first()
+    )
+    if project is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Project not found.")
+    return _apply_update(db, project, payload)

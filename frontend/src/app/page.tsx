@@ -1,4 +1,3 @@
-import { cookies } from "next/headers";
 import Link from "next/link";
 
 import { EmptyState } from "@/components/EmptyState";
@@ -7,7 +6,8 @@ import { IncidentListItem } from "@/components/IncidentListItem";
 import { PageHeader } from "@/components/PageHeader";
 import { SimulateButton } from "@/components/SimulateButton";
 import { StatTile } from "@/components/StatTile";
-import { ApiError, getProject, KEY_COOKIE, listIncidents } from "@/lib/api";
+import { ApiError, listIncidents } from "@/lib/api";
+import { currentUser, sessionCookie } from "@/lib/auth-server";
 import { severityRank } from "@/lib/format";
 import type { IncidentOut, IncidentStatus, Severity } from "@/lib/types";
 
@@ -23,35 +23,25 @@ export default async function DashboardPage({
 }: {
   searchParams: SearchParams;
 }) {
+  // No login wall: anonymous visitors see the public sandbox; signed-in users
+  // see their own private incidents. The cookie (present only when logged in)
+  // is forwarded so the backend scopes the result accordingly.
+  const user = await currentUser();
+  const cookie = sessionCookie();
+  const isLoggedIn = Boolean(user);
+
   const status = normaliseStatus(searchParams.status);
   const severity = normaliseSeverity(searchParams.severity);
-
-  // The per-browser API key is mirrored into a cookie by the Connect page. With
-  // a key we show this tenant's private incidents; without one, the public
-  // sandbox (the anonymous Simulate demo).
-  const apiKey = cookies().get(KEY_COOKIE)?.value ?? null;
 
   let incidents: IncidentOut[] = [];
   let statSource: IncidentOut[] = [];
   let fetchError: string | null = null;
-  let projectName: string | null = null;
-
-  if (apiKey) {
-    try {
-      projectName = (await getProject(apiKey)).name;
-    } catch {
-      // Stale/invalid key: fall back to treating the visitor as anonymous.
-    }
-  }
 
   try {
-    // Always fetch an unfiltered list for the stat tiles so counts stay
-    // meaningful even when the user has filters applied. When no filter is
-    // active we can reuse the same result for the list view.
     const hasFilter = Boolean(status || severity);
     const [filtered, all] = await Promise.all([
-      listIncidents({ status, severity, limit: 100 }, apiKey),
-      hasFilter ? listIncidents({ limit: 200 }, apiKey) : Promise.resolve(null),
+      listIncidents({ status, severity, limit: 100 }, cookie),
+      hasFilter ? listIncidents({ limit: 200 }, cookie) : Promise.resolve(null),
     ]);
 
     incidents = [...filtered].sort(
@@ -75,22 +65,20 @@ export default async function DashboardPage({
     critical: statSource.filter((i) => i.severity === "critical").length,
   };
 
-  const isKeyed = Boolean(apiKey);
-
   return (
     <>
       <PageHeader
-        eyebrow={isKeyed ? "Your project" : "Public demo"}
+        eyebrow={isLoggedIn ? "Your incidents" : "Public demo"}
         title="Incidents"
         description={
-          isKeyed
-            ? "Private incidents detected from logs your app sent to OpsPilot. Click any incident to inspect the agent's reasoning, tool usage, and cited evidence."
+          isLoggedIn
+            ? "Private incidents from your projects. Click any incident to inspect the agent's reasoning, tool usage, and cited evidence."
             : "AI-analyzed incidents in the shared public sandbox. Click any incident to inspect the agent's reasoning, tool usage, and cited evidence."
         }
-        actions={isKeyed ? undefined : <SimulateButton />}
+        actions={<SimulateButton />}
       />
 
-      <ViewBanner isKeyed={isKeyed} projectName={projectName} />
+      <ViewBanner isLoggedIn={isLoggedIn} email={user?.email ?? null} />
 
       <div className="mb-6 grid grid-cols-2 gap-3 sm:grid-cols-5">
         <StatTile label="Total" value={counts.total} />
@@ -112,11 +100,19 @@ export default async function DashboardPage({
               : "No incidents yet"
           }
           description={
-            status || severity
-              ? "Try clearing filters or choosing a different severity."
-              : isKeyed
-                ? "No incidents for your project yet. Send logs from your app to /ingest and OpsPilot will open one automatically when it detects an anomaly."
-                : "Click “Simulate incident” above to generate realistic logs and watch the AI agent diagnose your first incident."
+            status || severity ? (
+              "Try clearing filters or choosing a different severity."
+            ) : isLoggedIn ? (
+              <>
+                No incidents for your projects yet. Click “Simulate incident”, or{" "}
+                <Link href="/connect" className="text-sky-400 hover:text-sky-300">
+                  connect your app
+                </Link>{" "}
+                to stream real logs and have OpsPilot open incidents automatically.
+              </>
+            ) : (
+              "Click “Simulate incident” above to generate realistic logs and watch the AI agent diagnose your first incident."
+            )
           }
         />
       ) : (
@@ -131,25 +127,24 @@ export default async function DashboardPage({
 }
 
 function ViewBanner({
-  isKeyed,
-  projectName,
+  isLoggedIn,
+  email,
 }: {
-  isKeyed: boolean;
-  projectName: string | null;
+  isLoggedIn: boolean;
+  email: string | null;
 }) {
-  if (isKeyed) {
+  if (isLoggedIn) {
     return (
       <div className="mb-6 flex flex-wrap items-center justify-between gap-2 rounded-lg border border-emerald-500/20 bg-emerald-500/[0.04] px-4 py-3 text-sm">
         <span className="text-emerald-200/90">
-          Viewing the private incidents for
-          {projectName ? ` “${projectName}”` : " your project"}. Only someone
-          with this project&apos;s API key can see them.
+          Viewing your private incidents{email ? ` (${email})` : ""}. Only you can
+          see them.
         </span>
         <Link
           href="/connect"
           className="font-medium text-emerald-300 hover:text-emerald-200"
         >
-          Manage connection →
+          Connect your app →
         </Link>
       </div>
     );
@@ -159,14 +154,12 @@ function ViewBanner({
       <span className="text-sky-100/80">
         This is the <strong className="font-semibold">shared public demo</strong>{" "}
         — incidents here are visible to everyone. Don&apos;t paste real or secret
-        logs. Connect your app to get a private space.
+        logs.{" "}
+        <Link href="/login" className="font-medium text-sky-300 hover:text-sky-200">
+          Sign up
+        </Link>{" "}
+        to get a private space for your app.
       </span>
-      <Link
-        href="/connect"
-        className="font-medium text-sky-300 hover:text-sky-200"
-      >
-        Connect your app →
-      </Link>
     </div>
   );
 }

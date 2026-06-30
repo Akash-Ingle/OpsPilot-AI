@@ -12,8 +12,30 @@ OpsPilot-AI is built for the on-call workflow. When a service degrades, an engin
 
 ---
 
+## Demo
+
+> Screenshots from the [live deployment](https://opspilot-ai-frontend.onrender.com).
+
+![Incident detail — the agent's diagnosis, calibrated confidence, and full reasoning trace](docs/incident-top.png)
+
+_An incident OpsPilot diagnosed end-to-end: issue, root cause, and suggested fix with **calibrated confidence**, alongside agent telemetry (iterations, tools called, confidence progression) and the **step-by-step reasoning trace** with cited log lines._
+
+<table>
+<tr>
+<td width="50%"><img src="docs/dashboard.png" alt="Incident dashboard (public sandbox)" /></td>
+<td width="50%"><img src="docs/simulate.png" alt="One-click incident simulator" /></td>
+</tr>
+<tr>
+<td align="center"><em>Incident dashboard — auto-opened, severity-ranked</em></td>
+<td align="center"><em>One-click incident simulator</em></td>
+</tr>
+</table>
+
+---
+
 ## Table of contents
 
+- [Demo](#demo)
 - [What it does](#what-it-does)
 - [Connect your app (the product loop)](#connect-your-app-the-product-loop)
 - [Architecture](#architecture)

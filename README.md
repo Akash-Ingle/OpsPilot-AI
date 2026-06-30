@@ -14,7 +14,11 @@ OpsPilot-AI is built for the on-call workflow. When a service degrades, an engin
 
 ## Demo
 
-> Screenshots from the [live deployment](https://opspilot-ai-frontend.onrender.com).
+> Captured live from the [deployed app](https://opspilot-ai-frontend.onrender.com): pick a failure scenario → OpsPilot generates realistic logs, detects the anomaly, runs the multi-step agent, and opens a fully diagnosed incident.
+
+![OpsPilot demo — simulate an incident and watch the agent diagnose it end-to-end](docs/demo.gif)
+
+The incident it produces, in detail — diagnosis, calibrated confidence, agent telemetry, and the full reasoning trace:
 
 ![Incident detail — the agent's diagnosis, calibrated confidence, and full reasoning trace](docs/incident-top.png)
 

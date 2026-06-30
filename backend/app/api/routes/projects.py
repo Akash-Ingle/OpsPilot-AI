@@ -176,3 +176,39 @@ def update_project(
     if project is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Project not found.")
     return _apply_update(db, project, payload)
+
+
+@router.delete(
+    "/{project_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Delete one of the logged-in user's projects (and its logs/incidents)",
+)
+def delete_project(project_id: int, user: CurrentUser, db: DBSession) -> Response:
+    """Permanently delete a project the caller owns, along with every log and
+    incident scoped to it. Incidents are removed via the ORM session so their
+    analyses cascade away on any backend; logs are bulk-deleted."""
+    project = (
+        db.query(Project)
+        .filter(Project.id == project_id, Project.user_id == user.id)
+        .first()
+    )
+    if project is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Project not found.")
+
+    log_count = (
+        db.query(Log).filter(Log.project_id == project.id).delete(synchronize_session=False)
+    )
+    incidents = db.query(Incident).filter(Incident.project_id == project.id).all()
+    for incident in incidents:
+        db.delete(incident)  # cascades to the incident's analyses
+    db.delete(project)
+    db.commit()
+
+    logger.info(
+        "projects: user id={} deleted project id={} ({} log(s), {} incident(s))",
+        user.id,
+        project_id,
+        log_count,
+        len(incidents),
+    )
+    return Response(status_code=status.HTTP_204_NO_CONTENT)

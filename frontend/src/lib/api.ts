@@ -96,6 +96,18 @@ interface RequestOpts {
   // Server-only: forward this Cookie header to the backend so the session is
   // recognized during SSR. Ignored in the browser (cookies are automatic).
   cookie?: string | null;
+  // Opt-in for non-GET requests: retry through transient cold-start failures.
+  // Safe only for operations that are idempotent in practice (the request never
+  // reached the app on a gateway error, so re-sending can't double-apply).
+  retryTransient?: boolean;
+}
+
+// A failure is "transient" (worth retrying) when it's a gateway error, OR a 500
+// whose body is NOT our JSON error envelope. The latter is how the Next.js
+// same-origin proxy reports an unreachable upstream during a cold start: it
+// returns 500 with an HTML body, whereas our backend always returns JSON.
+function isTransientFailure(status: number, isJson: boolean): boolean {
+  return TRANSIENT_STATUSES.has(status) || (status === 500 && !isJson);
 }
 
 async function request<T>(
@@ -105,7 +117,7 @@ async function request<T>(
 ): Promise<T> {
   const url = `${API_URL}${path}`;
   const method = (init?.method ?? "GET").toUpperCase();
-  const canRetry = method === "GET";
+  const canRetry = method === "GET" || opts?.retryTransient === true;
 
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
@@ -140,18 +152,19 @@ async function request<T>(
       );
     }
 
+    const contentType = res.headers.get("content-type") ?? "";
+    const isJson = contentType.includes("application/json");
+
     if (
       !res.ok &&
       canRetry &&
-      TRANSIENT_STATUSES.has(res.status) &&
+      isTransientFailure(res.status, isJson) &&
       attempt < RETRY_DELAYS_MS.length
     ) {
       await sleep(RETRY_DELAYS_MS[attempt++]);
       continue;
     }
 
-    const contentType = res.headers.get("content-type") ?? "";
-    const isJson = contentType.includes("application/json");
     const payload = isJson
       ? await res.json().catch(() => null)
       : await res.text();
@@ -159,7 +172,9 @@ async function request<T>(
     if (!res.ok) {
       const detail =
         (isJson ? extractDetail(payload) : null) ??
-        `${res.status} ${res.statusText}`;
+        (isTransientFailure(res.status, isJson)
+          ? "The backend is waking up (free-tier cold start). Please try again in a moment."
+          : `${res.status} ${res.statusText}`);
       throw new ApiError(detail, res.status, url, payload);
     }
 
@@ -172,17 +187,19 @@ async function request<T>(
 // ---------------------------------------------------------------------------
 
 export function register(email: string, password: string): Promise<User> {
-  return request<User>(`/auth/register`, {
-    method: "POST",
-    body: JSON.stringify({ email, password }),
-  });
+  return request<User>(
+    `/auth/register`,
+    { method: "POST", body: JSON.stringify({ email, password }) },
+    { retryTransient: true },
+  );
 }
 
 export function login(email: string, password: string): Promise<User> {
-  return request<User>(`/auth/login`, {
-    method: "POST",
-    body: JSON.stringify({ email, password }),
-  });
+  return request<User>(
+    `/auth/login`,
+    { method: "POST", body: JSON.stringify({ email, password }) },
+    { retryTransient: true },
+  );
 }
 
 export function logout(): Promise<void> {
@@ -266,10 +283,11 @@ export interface SimulateParams {
 export function simulateScenario(
   params: SimulateParams,
 ): Promise<SimulateResult> {
-  return request<SimulateResult>(`/simulate`, {
-    method: "POST",
-    body: JSON.stringify(params),
-  });
+  return request<SimulateResult>(
+    `/simulate`,
+    { method: "POST", body: JSON.stringify(params) },
+    { retryTransient: true },
+  );
 }
 
 export interface AnalyzeParams {
@@ -281,10 +299,11 @@ export interface AnalyzeParams {
 export function triggerAnalysis(
   params: AnalyzeParams = {},
 ): Promise<AnalyzeResult> {
-  return request<AnalyzeResult>(`/analyze`, {
-    method: "POST",
-    body: JSON.stringify(params),
-  });
+  return request<AnalyzeResult>(
+    `/analyze`,
+    { method: "POST", body: JSON.stringify(params) },
+    { retryTransient: true },
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -315,6 +334,10 @@ export function updateProjectById(
     method: "PATCH",
     body: JSON.stringify(params),
   });
+}
+
+export function deleteProject(id: number): Promise<void> {
+  return request<void>(`/projects/${id}`, { method: "DELETE" });
 }
 
 // ---------------------------------------------------------------------------

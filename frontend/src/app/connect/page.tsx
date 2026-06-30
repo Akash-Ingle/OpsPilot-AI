@@ -7,6 +7,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import {
   ApiError,
   createProject,
+  deleteProject,
   ingestLogs,
   listProjects,
   PUBLIC_BACKEND_URL,
@@ -230,14 +231,17 @@ function ProjectCard({
             {project.key_prefix}…
           </span>
         </div>
-        {project.incident_count > 0 && (
-          <Link
-            href="/"
-            className="text-sm font-medium text-sky-400 hover:text-sky-300"
-          >
-            View incidents →
-          </Link>
-        )}
+        <div className="flex items-center gap-4">
+          {project.incident_count > 0 && (
+            <Link
+              href="/"
+              className="text-sm font-medium text-sky-400 hover:text-sky-300"
+            >
+              View incidents →
+            </Link>
+          )}
+          <DeleteProject project={project} onDeleted={onSaved} />
+        </div>
       </div>
 
       <div className="mt-5 grid grid-cols-2 gap-3 sm:grid-cols-3">
@@ -254,6 +258,69 @@ function ProjectCard({
       </div>
 
       <SlackSection project={project} onSaved={onSaved} />
+    </div>
+  );
+}
+
+function DeleteProject({
+  project,
+  onDeleted,
+}: {
+  project: ProjectOut;
+  onDeleted: () => void;
+}) {
+  const [confirming, setConfirming] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function remove() {
+    setBusy(true);
+    setError(null);
+    try {
+      await deleteProject(project.id);
+      onDeleted();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to delete project");
+      setBusy(false);
+    }
+  }
+
+  if (!confirming) {
+    return (
+      <button
+        type="button"
+        onClick={() => setConfirming(true)}
+        className="text-sm font-medium text-neutral-500 transition-colors hover:text-red-300"
+      >
+        Delete
+      </button>
+    );
+  }
+
+  return (
+    <div className="flex items-center gap-2">
+      <span className="text-xs text-neutral-400">
+        {error ?? "Delete project and all its logs/incidents?"}
+      </span>
+      <button
+        type="button"
+        onClick={remove}
+        disabled={busy}
+        className="rounded-md border border-red-500/30 bg-red-500/10 px-2.5 py-1 text-xs font-semibold text-red-200 transition-colors hover:bg-red-500/20 disabled:opacity-50"
+      >
+        {busy ? "Deleting…" : "Delete"}
+      </button>
+      <button
+        type="button"
+        onClick={() => {
+          setConfirming(false);
+          setError(null);
+        }}
+        disabled={busy}
+        className="rounded-md border border-white/10 px-2.5 py-1 text-xs font-medium text-neutral-300 transition-colors hover:bg-white/5 disabled:opacity-50"
+      >
+        Cancel
+      </button>
     </div>
   );
 }

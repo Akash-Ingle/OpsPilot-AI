@@ -340,6 +340,15 @@ export function deleteProject(id: number): Promise<void> {
   return request<void>(`/projects/${id}`, { method: "DELETE" });
 }
 
+export function sendTestAlert(
+  id: number,
+): Promise<{ ok: boolean; detail: string }> {
+  return request<{ ok: boolean; detail: string }>(
+    `/projects/${id}/test-alert`,
+    { method: "POST" },
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Ingestion — authenticated with the per-project API KEY (machine credential).
 // Used by the "send sample logs" demo button; real apps call the backend URL

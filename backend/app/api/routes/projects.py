@@ -178,6 +178,45 @@ def update_project(
     return _apply_update(db, project, payload)
 
 
+class TestAlertResponse(BaseModel):
+    ok: bool
+    detail: str
+
+
+@router.post(
+    "/{project_id}/test-alert",
+    response_model=TestAlertResponse,
+    summary="Send a test Slack alert to verify the project's webhook",
+)
+def test_project_alert(
+    project_id: int, user: CurrentUser, db: DBSession
+) -> TestAlertResponse:
+    """Post a confirmation message to the project's Slack webhook so the owner
+    can verify the integration without waiting for a real incident."""
+    project = (
+        db.query(Project)
+        .filter(Project.id == project_id, Project.user_id == user.id)
+        .first()
+    )
+    if project is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Project not found.")
+    if not project.slack_webhook_url:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="No Slack webhook configured. Save a webhook URL first.",
+        )
+
+    from app.services.alerting import send_slack_test_message
+
+    if not send_slack_test_message(project.slack_webhook_url):
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Slack rejected the message. Double-check the webhook URL.",
+        )
+    logger.info("projects: sent Slack test alert for project id={}", project.id)
+    return TestAlertResponse(ok=True, detail="Test alert sent to Slack.")
+
+
 @router.delete(
     "/{project_id}",
     status_code=status.HTTP_204_NO_CONTENT,

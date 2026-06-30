@@ -95,6 +95,49 @@ def build_slack_payload(
     return {"text": header, "blocks": blocks}
 
 
+def send_slack_test_message(webhook_url: str) -> bool:
+    """Post a simple confirmation message so a user can verify their webhook
+    works without waiting for a real incident. Returns success."""
+    payload = {
+        "text": ":white_check_mark: OpsPilot test alert",
+        "blocks": [
+            {
+                "type": "header",
+                "text": {
+                    "type": "plain_text",
+                    "text": ":white_check_mark: OpsPilot is connected",
+                    "emoji": True,
+                },
+            },
+            {
+                "type": "section",
+                "text": {
+                    "type": "mrkdwn",
+                    "text": (
+                        "This is a test alert. When OpsPilot opens a real incident, "
+                        "the severity, root cause, suggested fix, and a link to the "
+                        "full analysis will be posted here."
+                    ),
+                },
+            },
+        ],
+    }
+    try:
+        resp = httpx.post(webhook_url, json=payload, timeout=10.0)
+        if resp.status_code >= 300:
+            logger.warning(
+                "alerting: Slack test webhook returned {} - {}",
+                resp.status_code,
+                resp.text[:200],
+            )
+            return False
+        logger.info("alerting: posted Slack test alert")
+        return True
+    except Exception as exc:  # pragma: no cover - network defensive
+        logger.warning("alerting: failed to post Slack test alert: {}", exc)
+        return False
+
+
 def send_slack_incident_alert(
     webhook_url: str,
     incident: Incident,
@@ -124,4 +167,8 @@ def send_slack_incident_alert(
         return False
 
 
-__all__ = ["build_slack_payload", "send_slack_incident_alert"]
+__all__ = [
+    "build_slack_payload",
+    "send_slack_incident_alert",
+    "send_slack_test_message",
+]

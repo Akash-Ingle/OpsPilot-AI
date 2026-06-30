@@ -130,3 +130,50 @@ def test_delete_unknown_project_is_404(session_factory):
     owner = TestClient(app)
     login(owner, "owner@example.com")
     assert owner.delete(f"{API}/projects/999999").status_code == 404
+
+
+def test_test_alert_requires_webhook(session_factory):
+    owner = TestClient(app)
+    login(owner, "owner@example.com")
+    proj = create_project(owner, "no-slack")
+    res = owner.post(f"{API}/projects/{proj['id']}/test-alert")
+    assert res.status_code == 400
+
+
+def test_test_alert_posts_when_configured(session_factory, monkeypatch):
+    sent = {}
+
+    def fake_send(url: str) -> bool:
+        sent["url"] = url
+        return True
+
+    monkeypatch.setattr(
+        "app.services.alerting.send_slack_test_message", fake_send
+    )
+
+    owner = TestClient(app)
+    login(owner, "owner@example.com")
+    proj = create_project(owner, "with-slack")
+    hook = "https://hooks.slack.com/services/T/B/x"
+    assert (
+        owner.patch(
+            f"{API}/projects/{proj['id']}", json={"slack_webhook_url": hook}
+        ).status_code
+        == 200
+    )
+
+    res = owner.post(f"{API}/projects/{proj['id']}/test-alert")
+    assert res.status_code == 200, res.text
+    assert res.json()["ok"] is True
+    assert sent["url"] == hook
+
+
+def test_test_alert_cross_tenant_is_404(session_factory):
+    owner = TestClient(app)
+    login(owner, "a@example.com")
+    proj = create_project(owner, "tenant-a")
+
+    other = TestClient(app)
+    login(other, "b@example.com")
+    res = other.post(f"{API}/projects/{proj['id']}/test-alert")
+    assert res.status_code == 404

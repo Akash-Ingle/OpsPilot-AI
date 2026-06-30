@@ -11,6 +11,7 @@ import {
   ingestLogs,
   listProjects,
   PUBLIC_BACKEND_URL,
+  sendTestAlert,
   updateProjectById,
   type IngestLogItem,
 } from "@/lib/api";
@@ -438,6 +439,7 @@ function SlackSection({
 }) {
   const [url, setUrl] = useState("");
   const [busy, setBusy] = useState(false);
+  const [testing, setTesting] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
   const [isError, setIsError] = useState(false);
 
@@ -455,6 +457,21 @@ function SlackSection({
       setMsg(err instanceof Error ? err.message : "Failed to save webhook");
     } finally {
       setBusy(false);
+    }
+  }
+
+  async function test() {
+    setTesting(true);
+    setMsg(null);
+    setIsError(false);
+    try {
+      const res = await sendTestAlert(project.id);
+      setMsg(res.detail || "Test alert sent — check your Slack channel.");
+    } catch (err) {
+      setIsError(true);
+      setMsg(err instanceof Error ? err.message : "Failed to send test alert");
+    } finally {
+      setTesting(false);
     }
   }
 
@@ -487,7 +504,11 @@ function SlackSection({
         <input
           value={url}
           onChange={(e) => setUrl(e.target.value)}
-          placeholder="https://hooks.slack.com/services/T…/B…/…"
+          placeholder={
+            project.slack_configured
+              ? "Paste a new URL to replace the current one"
+              : "https://hooks.slack.com/services/T…/B…/…"
+          }
           className="flex-1 rounded-lg border border-white/10 bg-white/[0.03] px-3 py-2 text-sm text-neutral-100 outline-none placeholder:text-neutral-600 focus:border-sky-500/50"
         />
         <button
@@ -497,6 +518,15 @@ function SlackSection({
         >
           {busy ? "Saving…" : "Save webhook"}
         </button>
+        {project.slack_configured && (
+          <button
+            onClick={test}
+            disabled={testing}
+            className="rounded-lg border border-white/10 bg-white/[0.04] px-4 py-2 text-sm font-semibold text-neutral-100 transition-colors hover:bg-white/[0.08] disabled:opacity-50"
+          >
+            {testing ? "Sending…" : "Send test alert"}
+          </button>
+        )}
       </div>
       {msg && (
         <p className={`mt-3 text-sm ${isError ? "text-red-300" : "text-emerald-300/90"}`}>

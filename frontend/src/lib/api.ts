@@ -106,7 +106,7 @@ interface RequestOpts {
 // whose body is NOT our JSON error envelope. The latter is how the Next.js
 // same-origin proxy reports an unreachable upstream during a cold start: it
 // returns 500 with an HTML body, whereas our backend always returns JSON.
-function isTransientFailure(status: number, isJson: boolean): boolean {
+export function isTransientFailure(status: number, isJson: boolean): boolean {
   return TRANSIENT_STATUSES.has(status) || (status === 500 && !isJson);
 }
 

@@ -11,6 +11,7 @@ from app.agent.orchestrator import run_agent_loop
 from app.api.deps import OptionalUser, DBSession
 from app.config import settings
 from app.core.logging import logger
+from app.core.metrics import record_analysis, record_incident
 from app.core.rate_limit import limiter
 from app.models.analysis import Analysis
 from app.models.incident import Incident
@@ -153,6 +154,9 @@ def trigger_analysis(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to persist analysis results.",
         ) from exc
+
+    record_incident("analyze")
+    record_analysis(served_from_cache)
 
     logger.info(
         "analyze: created incident_id={} analysis_id={} severity={} confidence={:.2f} "

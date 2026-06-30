@@ -20,6 +20,7 @@ from app.agent.llm_client import LLMError, LLMTimeoutError, LLMValidationError
 from app.agent.orchestrator import AgentRunResult, run_agent_loop
 from app.config import settings
 from app.core.logging import logger
+from app.core.metrics import record_analysis, record_incident
 from app.database import SessionLocal
 from app.models.analysis import Analysis
 from app.models.incident import Incident
@@ -143,6 +144,9 @@ def auto_analyze_project(project_id: int) -> Optional[int]:
         project.last_auto_analysis_at = _now()
         db.commit()
         db.refresh(incident)
+
+        record_incident("watcher")
+        record_analysis(served_from_cache)
 
         logger.info(
             "watcher: opened incident_id={} (project_id={} severity={} cached={})",

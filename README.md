@@ -2,6 +2,8 @@
 
 [![CI](https://github.com/Akash-Ingle/OpsPilot-AI/actions/workflows/ci.yml/badge.svg)](https://github.com/Akash-Ingle/OpsPilot-AI/actions/workflows/ci.yml)
 
+**[Live demo →](https://opspilot-ai-frontend.onrender.com)** · try the public sandbox instantly (free-tier host — the first request may take ~30s to wake).
+
 > An autonomous **AIOps incident-analysis agent**: point your app's logs at it, and it watches the stream, detects anomalies, runs a multi-step LLM reasoning loop to produce a root cause + remediation + calibrated confidence, opens an incident, and alerts you in Slack — then grades itself against ground truth.
 
 OpsPilot-AI is built for the on-call workflow. When a service degrades, an engineer normally greps logs, correlates errors, checks metrics, and forms a hypothesis. OpsPilot does that first pass automatically and shows its work: every reasoning step, every tool call, and every log line it used as evidence.
@@ -17,6 +19,8 @@ OpsPilot-AI is built for the on-call workflow. When a service degrades, an engin
 - [Architecture](#architecture)
 - [The agent loop](#the-agent-loop)
 - [Evaluation results](#evaluation-results)
+- [Design decisions & trade-offs](#design-decisions--trade-offs)
+- [Metrics & observability](#metrics--observability)
 - [Tech stack](#tech-stack)
 - [Quickstart](#quickstart)
 - [Deploy a public demo](#deploy-a-public-demo-render)
@@ -196,6 +200,34 @@ The severity bright-line rubric **generalizes across models**: on Gemini, `laten
 
 ---
 
+## Design decisions & trade-offs
+
+The interesting engineering here is in the *choices*, not the line count. A few:
+
+- **Event-driven watcher, not a cron.** Auto-analysis is a background task kicked by ingestion, so it works on a free-tier host that sleeps between requests — and a per-project cooldown keeps a log flood from spamming the LLM.
+- **Tenant isolation returns 404, never 403.** Cross-tenant access doesn't leak that a resource exists. API keys are stored only as SHA-256 hashes; sessions live in httpOnly, Secure cookies kept first-party via a same-origin Next.js proxy (XSS-resistant).
+- **Degrade, don't fail.** When the LLM quota is exhausted the agent serves a cached analysis (flagged `served_from_cache`) instead of erroring; Slack delivery and vector-memory writes are best-effort and never block the ingestion/analysis path.
+
+See **[DESIGN.md](./DESIGN.md)** for the full write-up (architecture rationale, the agent's termination logic, and what I'd do next at scale).
+
+---
+
+## Metrics & observability
+
+Beyond per-incident reasoning traces in the dashboard, the backend exposes a
+Prometheus-format endpoint at **`GET /metrics`** (app root, unauthenticated —
+scrape it from Prometheus/Grafana):
+
+```bash
+curl localhost:8000/metrics
+```
+
+It publishes default process metrics plus app counters:
+`opspilot_logs_ingested_total`, `opspilot_incidents_opened_total`, and
+`opspilot_analyses_total{served_from_cache="true|false"}`.
+
+---
+
 ## Tech stack
 
 | Layer        | Technology                                                                 |
@@ -205,7 +237,8 @@ The severity bright-line rubric **generalizes across models**: on Gemini, `laten
 | Vector store | ChromaDB (local persistent, incident memory)                               |
 | Database     | SQLite (zero-setup dev) or PostgreSQL                                       |
 | Frontend     | Next.js 14 (App Router), React 18, TypeScript, Tailwind CSS                |
-| Tooling      | pytest, ruff/eslint                                                        |
+| Observability| Prometheus metrics endpoint (`/metrics`)                                   |
+| Tooling      | pytest, vitest, ruff/eslint                                                |
 
 ---
 
@@ -346,6 +379,8 @@ signed in / keyed.
 | POST   | `/projects`           | session  | Create a project, issue an API key (returned once)    |
 | GET    | `/projects`           | session  | List your projects + ingest/incident stats            |
 | PATCH  | `/projects/{id}`      | session  | Set the Slack webhook / toggle alerts                 |
+| POST   | `/projects/{id}/test-alert` | session | Send a test Slack alert to verify the webhook    |
+| DELETE | `/projects/{id}`      | session  | Delete a project + its logs/incidents                 |
 | GET    | `/projects/me`        | key      | Current project stats (by API key)                    |
 | POST   | `/ingest`             | key      | Ship a batch of logs; triggers the watcher            |
 | GET    | `/logs`               | optional | List / filter logs (scoped to caller)                 |

@@ -14,6 +14,7 @@ from pydantic import BaseModel, Field
 from app.api.deps import CurrentProject, DBSession
 from app.config import settings
 from app.core.logging import logger
+from app.core.metrics import LOGS_INGESTED_TOTAL
 from app.core.rate_limit import limiter
 from app.models.log import Log
 from app.services.watcher import auto_analyze_project
@@ -72,6 +73,7 @@ def ingest_logs(
     ]
     db.add_all(rows)
     db.commit()
+    LOGS_INGESTED_TOTAL.inc(len(rows))
 
     logger.info(
         "ingest: project_id={} accepted {} log(s)", project.id, len(rows)

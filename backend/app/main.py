@@ -2,8 +2,9 @@
 
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Response
 from fastapi.middleware.cors import CORSMiddleware
+from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 
@@ -62,6 +63,11 @@ def create_app() -> FastAPI:
     @app.get("/health", tags=["meta"])
     def health():
         return {"status": "ok"}
+
+    @app.get("/metrics", tags=["meta"], include_in_schema=False)
+    def metrics():
+        """Prometheus exposition: default process metrics + app counters."""
+        return Response(generate_latest(), media_type=CONTENT_TYPE_LATEST)
 
     return app
 
